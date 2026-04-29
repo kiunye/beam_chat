@@ -1,0 +1,161 @@
+/* See the Tailwind configuration guide for advanced usage
+   https://tailwindcss.com/docs/configuration */
+
+@import "tailwindcss" source(none);
+@source "../css";
+@source "../js";
+@source "../../lib/beam_chat_web";
+
+@plugin "../vendor/heroicons";
+
+/* daisyUI: custom themes only (see DESIGN_SYSTEM.md + .cursor/rules) */
+@plugin "../vendor/daisyui" {
+  themes: false;
+}
+
+/*
+  Beam Chat — light / dark (DaisyUI theme plugin).
+  Product-led: neutral cool bases + cyan primary accent.
+  When Figma variables exist, map them into these --color-* tokens (see DESIGN_SYSTEM.md).
+*/
+@plugin "../vendor/daisyui-theme" {
+  name: "dark";
+  default: false;
+  prefersdark: true;
+  color-scheme: dark;
+  --color-base-100: oklch(22% 0.02 260);
+  --color-base-200: oklch(18% 0.02 260);
+  --color-base-300: oklch(14% 0.02 260);
+  --color-base-content: oklch(96% 0.01 260);
+  --color-primary: oklch(62% 0.15 230);
+  --color-primary-content: oklch(14% 0.04 250);
+  --color-secondary: oklch(35% 0.04 260);
+  --color-secondary-content: oklch(94% 0.01 260);
+  --color-accent: oklch(72% 0.12 200);
+  --color-accent-content: oklch(18% 0.04 250);
+  --color-neutral: oklch(30% 0.03 260);
+  --color-neutral-content: oklch(96% 0.01 260);
+  --color-info: oklch(62% 0.14 245);
+  --color-info-content: oklch(14% 0.04 260);
+  --color-success: oklch(58% 0.12 165);
+  --color-success-content: oklch(14% 0.03 165);
+  --color-warning: oklch(72% 0.14 75);
+  --color-warning-content: oklch(18% 0.04 75);
+  --color-error: oklch(60% 0.2 25);
+  --color-error-content: oklch(98% 0.01 25);
+  --radius-selector: 0.5rem;
+  --radius-field: 0.5rem;
+  --radius-box: 0.75rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
+}
+
+@plugin "../vendor/daisyui-theme" {
+  name: "light";
+  default: true;
+  prefersdark: false;
+  color-scheme: light;
+  --color-base-100: oklch(99% 0.003 260);
+  --color-base-200: oklch(96% 0.008 260);
+  --color-base-300: oklch(91% 0.012 260);
+  --color-base-content: oklch(22% 0.02 265);
+  --color-primary: oklch(48% 0.14 235);
+  --color-primary-content: oklch(98% 0.01 235);
+  --color-secondary: oklch(45% 0.03 265);
+  --color-secondary-content: oklch(98% 0.005 265);
+  --color-accent: oklch(55% 0.12 200);
+  --color-accent-content: oklch(98% 0.01 200);
+  --color-neutral: oklch(40% 0.02 265);
+  --color-neutral-content: oklch(98% 0.005 265);
+  --color-info: oklch(52% 0.14 245);
+  --color-info-content: oklch(98% 0.01 245);
+  --color-success: oklch(48% 0.11 165);
+  --color-success-content: oklch(98% 0.01 165);
+  --color-warning: oklch(62% 0.15 75);
+  --color-warning-content: oklch(18% 0.04 75);
+  --color-error: oklch(50% 0.2 25);
+  --color-error-content: oklch(98% 0.01 25);
+  --radius-selector: 0.5rem;
+  --radius-field: 0.5rem;
+  --radius-box: 0.75rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
+}
+
+@theme {
+  --font-sans: "Lexend Deca", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Lexend Deca", ui-sans-serif, system-ui, sans-serif;
+}
+
+@custom-variant phx-click-loading (.phx-click-loading&, .phx-click-loading &);
+@custom-variant phx-submit-loading (.phx-submit-loading&, .phx-submit-loading &);
+@custom-variant phx-change-loading (.phx-change-loading&, .phx-change-loading &);
+
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+
+[data-phx-session],
+[data-phx-teleported-src] {
+  display: contents;
+}
+
+/* Skip link — WCAG 2.4.1 Bypass Blocks; visible on keyboard focus only */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0.75rem;
+  z-index: 100;
+  padding: 0.5rem 1rem;
+  border-radius: var(--radius-field, 0.5rem);
+  background-color: var(--color-primary);
+  color: var(--color-primary-content);
+  font-weight: 600;
+  text-decoration: none;
+  box-shadow: 0 0 0 2px var(--color-base-100), 0 0 0 4px var(--color-primary);
+}
+
+.skip-link:focus {
+  left: 0.75rem;
+  outline: none;
+}
+
+.skip-link:focus-visible {
+  left: 0.75rem;
+  outline: none;
+}
+
+/*
+  Focus visible — WCAG 2.4.7 Focus Visible; 2.4.11 Focus Appearance (minimum) where applicable.
+  DaisyUI components keep their styles; this reinforces native controls + links.
+*/
+@layer base {
+  :where(a, button, input, textarea, select, summary):focus {
+    outline: none;
+  }
+
+  :where(a, button, input, textarea, select, summary):focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+
+  :where(.btn):focus-visible {
+    outline-offset: 2px;
+  }
+}
+
+/* Respect prefers-reduced-motion — WCAG 2.3.3 Animation from Interactions */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

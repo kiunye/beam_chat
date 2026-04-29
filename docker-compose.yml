@@ -1,0 +1,23 @@
+# Local development database (matches PRD Postgres 16 baseline).
+# Run from repo root: docker compose up -d
+# Then: cd beam_chat && mix setup
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: beam_chat_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - beam_chat_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d beam_chat_dev"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  beam_chat_pgdata:

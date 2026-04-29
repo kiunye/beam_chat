@@ -1,0 +1,14 @@
+# `api_session` omits CSRF by design: `POST /api/sso/exchange` is server-to-server JWT, not browser form posts.
+[
+  exit: false,
+  format: "txt",
+  ignore_files: [],
+  ignore: ["Config.CSRF"],
+  out: nil,
+  private: false,
+  router: nil,
+  skip: false,
+  threshold: :low,
+  verbose: false,
+  version: false
+]
