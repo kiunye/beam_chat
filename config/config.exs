@@ -45,6 +45,13 @@ config :beam_chat,
 
 config :beam_chat, :sso_jwt_secret, "dev_sso_jwt_secret_change_me_min_32_chars___"
 
+# LiveKit: read from env in dev; runtime.exs may override in prod.
+# In dev the values default to livekit-server's --dev mode (devkey/secret).
+config :livekit,
+  api_key: System.get_env("LIVEKIT_API_KEY", "devkey"),
+  api_secret: System.get_env("LIVEKIT_API_SECRET", "secret"),
+  url: System.get_env("LIVEKIT_URL", "ws://localhost:7880")
+
 config :assent, :http_adapter, Assent.HTTPAdapter.Req
 
 # Configure the endpoint
@@ -74,7 +81,7 @@ config :esbuild,
     args:
       ~w(js/app.js --bundle --target=es2022 --outdir=../priv/static/assets/js --external:/fonts/* --external:/images/* --alias:@=.),
     cd: Path.expand("../assets", __DIR__),
-    env: %{"NODE_PATH" => [Path.expand("../deps", __DIR__), Mix.Project.build_path()]}
+    env: %{"NODE_PATH" => [Path.expand("../deps", __DIR__), Path.expand("../assets/node_modules", __DIR__), Mix.Project.build_path()]}
   ]
 
 # Configure tailwind (the version is required)

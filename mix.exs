@@ -79,6 +79,7 @@ defmodule BeamChat.MixProject do
       {:broadway, "~> 1.2.1"},
       {:libcluster, "~> 3.5.0"},
       {:horde, "~> 0.10.0"},
+      {:livekit, "~> 0.1"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:sobelow, "~> 0.14", only: [:dev, :test], runtime: false}

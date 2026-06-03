@@ -6,6 +6,7 @@ defmodule BeamChatWeb.RoomLive.Show do
   alias BeamChat.Rooms
   alias BeamChat.Rooms.AccessPolicy
   alias BeamChat.Rooms.Room
+  alias BeamChat.Video.TokenService
   alias BeamChat.Wallet
   alias BeamChatWeb.RoomPresence
 
@@ -44,6 +45,8 @@ defmodule BeamChatWeb.RoomLive.Show do
           |> assign(:presence_list, %{})
           |> assign(:presence_list_sorted, [])
           |> assign(:message_form, message_form)
+          |> assign(:can_video, can_video?(user, room))
+          |> assign(:video_configured, video_configured?())
           |> stream(:messages, messages, dom_id: &message_dom_id/1)
 
         socket =
@@ -220,6 +223,36 @@ defmodule BeamChatWeb.RoomLive.Show do
     {:noreply, assign(socket, :typing_clear_timer_ref, timer_ref)}
   end
 
+  # Video events sent from the client-side LiveKitRoom hook are forwarded
+  # to the VideoLive LiveComponent (id="video-panel") for state tracking.
+  def handle_event("video_connected", params, socket) do
+    send_update(BeamChatWeb.VideoLive, id: "video-panel", video_state: :connected)
+
+    {:noreply,
+     socket
+     |> assign_video_participant_count(params)}
+  end
+
+  def handle_event("video_disconnected", _params, socket) do
+    send_update(BeamChatWeb.VideoLive, id: "video-panel", video_state: :idle)
+    {:noreply, socket}
+  end
+
+  def handle_event("video_error", %{"message" => message}, socket) do
+    send_update(BeamChatWeb.VideoLive,
+      id: "video-panel",
+      video_state: :error,
+      video_error: message
+    )
+
+    {:noreply, socket}
+  end
+
+  defp assign_video_participant_count(socket, %{"participants" => n}) when is_integer(n),
+    do: assign(socket, :participant_count, n)
+
+  defp assign_video_participant_count(socket, _), do: socket
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -372,6 +405,15 @@ defmodule BeamChatWeb.RoomLive.Show do
               <p :if={map_size(@presence_list) == 0} class="text-xs text-base-content/55">
                 Connecting…
               </p>
+
+              <.live_component
+                :if={@video_configured}
+                module={BeamChatWeb.VideoLive}
+                id="video-panel"
+                room={@room}
+                current_user={@current_user}
+                can_video={@can_video}
+              />
             </aside>
           </div>
       <% end %>
@@ -433,4 +475,15 @@ defmodule BeamChatWeb.RoomLive.Show do
   end
 
   defp sufficient_for_paid_room?(_, _), do: false
+
+  defp can_video?(user, room), do: AccessPolicy.can_video?(room, user)
+
+  defp video_configured? do
+    case TokenService.generate_token(%{id: Ecto.UUID.autogenerate()}, Ecto.UUID.autogenerate()) do
+      {:ok, _payload} -> true
+      {:error, :not_configured} -> false
+    end
+  rescue
+    _ -> false
+  end
 end
