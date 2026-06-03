@@ -63,4 +63,19 @@ defmodule BeamChat.Rooms.AccessPolicy do
 
   defp paid_subscription_outcome(%{active_subscription: true}), do: :ok
   defp paid_subscription_outcome(_flags), do: {:blocked, :upgrade_required}
+
+  @doc """
+  Whether `user` may join the LiveKit audio/video session for `room`.
+
+  Reuses the same rules as `check/2`: only authenticated members of a room
+  get a LiveKit token. Banned users never get a token; secret rooms always
+  require membership.
+  """
+  @spec can_video?(%Room{}, %User{} | nil) :: boolean()
+  def can_video?(%Room{}, %User{is_banned: true}), do: false
+  def can_video?(%Room{}, nil), do: false
+
+  def can_video?(%Room{} = room, %User{id: uid, is_banned: false}) do
+    match?(:ok, check(room, %User{id: uid, is_banned: false}))
+  end
 end

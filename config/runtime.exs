@@ -127,6 +127,28 @@ if config_env() == :prod do
 
   config :beam_chat, :sso_jwt_secret, sso_jwt_secret
 
+  # LiveKit: required in production so we never accidentally use dev keys.
+  livekit_url =
+    System.get_env("LIVEKIT_URL") ||
+      raise """
+      environment variable LIVEKIT_URL is missing.
+      Should be the public WebSocket URL the browser will connect to,
+      e.g. wss://livekit.example.com
+      """
+
+  livekit_api_key =
+    System.get_env("LIVEKIT_API_KEY") ||
+      raise "environment variable LIVEKIT_API_KEY is missing."
+
+  livekit_api_secret =
+    System.get_env("LIVEKIT_API_SECRET") ||
+      raise "environment variable LIVEKIT_API_SECRET is missing."
+
+  config :livekit,
+    api_key: livekit_api_key,
+    api_secret: livekit_api_secret,
+    url: livekit_url
+
   # ## Configuring the mailer
   #
   # In production you need to configure the mailer to use a different adapter.
