@@ -2,9 +2,11 @@
   <div class="max-w-5xl mx-auto px-6 py-12 space-y-16">
     <header class="space-y-3 border-b border-base-300 pb-10">
       <p class="text-sm font-medium text-primary uppercase tracking-widest">Figma handoff</p>
+      
       <h1 class="font-display text-4xl font-semibold tracking-tight">
         Beam Chat — design system kit
       </h1>
+      
       <p class="text-base-content/75 max-w-2xl leading-relaxed">
         Use this page with the Figma MCP <strong class="text-base-content">html-to-design</strong>
         capture. Semantic colors follow DaisyUI roles (OKLCH in <code class="text-xs bg-base-300/50 px-1 rounded">app.css</code>). Create matching
@@ -12,63 +14,79 @@
         using the suggested names in <code class="text-xs bg-base-300/50 px-1 rounded">DESIGN_SYSTEM.md</code>.
       </p>
     </header>
-
+    
     <section class="space-y-6" aria-labelledby="palette-heading">
       <h2 id="palette-heading" class="font-display text-2xl font-semibold">Color palettes</h2>
+      
       <p class="text-sm text-base-content/70">
         Left: <code class="bg-base-300/40 px-1 rounded">data-theme="light"</code>. Right: <code class="bg-base-300/40 px-1 rounded">data-theme="dark"</code>.
       </p>
+      
       <div class="grid md:grid-cols-2 gap-6">
         <div
           data-theme="light"
           class="rounded-box border border-base-300 bg-base-100 p-6 space-y-4 shadow-sm"
         >
           <h3 class="font-display font-semibold text-lg">Light</h3>
-          <.swatch_grid />
+           <.swatch_grid />
         </div>
+        
         <div
           data-theme="dark"
           class="rounded-box border border-base-300 bg-base-100 p-6 space-y-4 shadow-sm"
         >
           <h3 class="font-display font-semibold text-lg">Dark</h3>
-          <.swatch_grid />
+           <.swatch_grid />
         </div>
       </div>
     </section>
-
+    
     <section class="space-y-6" aria-labelledby="type-heading">
       <h2 id="type-heading" class="font-display text-2xl font-semibold">Typography</h2>
+      
       <div class="card bg-base-100 border border-base-300 rounded-box p-8 space-y-6">
         <div>
           <p class="text-xs uppercase tracking-wide text-base-content/50 mb-2">Display — Sora</p>
+          
           <p class="font-display text-4xl font-semibold">The quick brown fox</p>
+          
           <p class="font-display text-2xl font-medium mt-2">H2 · Section titles</p>
         </div>
+        
         <div>
           <p class="text-xs uppercase tracking-wide text-base-content/50 mb-2">
             UI / body — DM Sans
           </p>
+          
           <p class="text-lg leading-relaxed text-base-content/90">
             Body large. WCAG: aim for ≥ 4.5:1 contrast for normal text on base surfaces.
           </p>
+          
           <p class="text-sm text-base-content/70 mt-3">Small meta text · captions · footnotes</p>
         </div>
       </div>
     </section>
-
+    
     <section class="space-y-6" aria-labelledby="scale-heading">
       <h2 id="scale-heading" class="font-display text-2xl font-semibold">Spacing & radius</h2>
+      
       <div class="card bg-base-100 border border-base-300 rounded-box p-8">
         <div class="flex flex-wrap items-end gap-3">
           <div class="w-2 h-8 bg-primary rounded-sm" title="0.5rem"></div>
+          
           <div class="w-3 h-10 bg-primary/80 rounded-sm" title="0.75rem"></div>
+          
           <div class="w-4 h-12 bg-primary/60 rounded-md" title="1rem"></div>
+          
           <div class="w-6 h-14 bg-primary/50 rounded-md" title="1.5rem"></div>
+          
           <div class="w-8 h-16 bg-primary/40 rounded-lg" title="2rem"></div>
+          
           <span class="text-sm text-base-content/60 ml-2">
             Tailwind spacing scale (representative)
           </span>
         </div>
+        
         <p class="text-sm text-base-content/65 mt-6">
           DaisyUI <code class="bg-base-200 px-1 rounded text-xs">--radius-field</code>
           / <code class="bg-base-200 px-1 rounded text-xs">--radius-box</code>
@@ -76,11 +94,12 @@
         </p>
       </div>
     </section>
-
+    
     <section class="space-y-6" aria-labelledby="components-heading">
       <h2 id="components-heading" class="font-display text-2xl font-semibold">
         Components & states
       </h2>
+      
       <div class="card bg-base-100 border border-base-300 rounded-box p-8 space-y-8">
         <div class="flex flex-wrap gap-3">
           <button type="button" class="btn btn-primary">Primary</button>
@@ -89,12 +108,14 @@
           <button type="button" class="btn btn-ghost">Ghost</button>
           <button type="button" class="btn btn-link">Link</button>
         </div>
+        
         <div class="flex flex-wrap gap-3 items-center">
           <span class="loading loading-spinner loading-md text-primary"></span>
           <span class="badge badge-primary">Primary</span>
           <span class="badge badge-secondary">Secondary</span>
           <span class="badge badge-outline">Outline</span>
         </div>
+        
         <div class="grid sm:grid-cols-2 gap-4 max-w-xl">
           <input type="text" readonly value="Input default" class="input input-bordered w-full" />
           <input
@@ -104,12 +125,17 @@
             class="input input-bordered input-error w-full"
           />
         </div>
+        
         <div class="space-y-3 max-w-xl">
           <div role="alert" class="alert alert-info"><span>Info alert</span></div>
+          
           <div role="alert" class="alert alert-success"><span>Success</span></div>
+          
           <div role="alert" class="alert alert-warning"><span>Warning</span></div>
+          
           <div role="alert" class="alert alert-error"><span>Error</span></div>
         </div>
+        
         <p class="text-sm text-base-content/70">
           <strong class="text-base-content">Focus</strong>:
           <code class="text-xs bg-base-200 px-1 rounded">:focus-visible</code>
@@ -119,7 +145,7 @@
         </p>
       </div>
     </section>
-
+    
     <section class="space-y-4 border-t border-base-300 pt-10 text-sm text-base-content/65">
       <p>
         After capture completes in Figma, add <strong class="text-base-content">variables</strong>

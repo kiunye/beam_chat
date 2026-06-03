@@ -105,6 +105,7 @@ defmodule BeamChatWeb.VideoLive do
   attr :current_user, :any, required: true
   attr :can_video, :boolean, default: false
 
+  @impl true
   def render(assigns) do
     ~H"""
     <div
@@ -115,9 +116,8 @@ defmodule BeamChatWeb.VideoLive do
       class="rounded-box border border-base-300 bg-base-200/40 p-3 space-y-2"
     >
       <div class="flex items-center justify-between">
-        <h3 class="text-xs font-semibold uppercase tracking-wide text-base-content/60">
-          Video room
-        </h3>
+        <h3 class="text-xs font-semibold uppercase tracking-wide text-base-content/60">Video room</h3>
+
         <span
           :if={@video_state == :connected}
           class="badge badge-success badge-sm"
@@ -150,7 +150,6 @@ defmodule BeamChatWeb.VideoLive do
         >
           Join video
         </button>
-
         <button
           :if={@video_state in [:joining, :connected]}
           type="button"
@@ -161,7 +160,6 @@ defmodule BeamChatWeb.VideoLive do
         >
           Leave video
         </button>
-
         <span
           :if={@video_state == :joining}
           class="text-xs text-base-content/60 self-center"

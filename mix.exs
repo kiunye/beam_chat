@@ -80,6 +80,10 @@ defmodule BeamChat.MixProject do
       {:libcluster, "~> 3.5.0"},
       {:horde, "~> 0.10.0"},
       {:livekit, "~> 0.1"},
+      # Override livekit's transitive dep to fix Elixir 1.19 macro expansion
+      # (https://hexdocs.pm/protobuf/0.15.0/changelog.html):
+      #   v0.15.0 - Fix a possible compilation error on Elixir 1.19.
+      {:protobuf, "~> 0.15.0", override: true},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:sobelow, "~> 0.14", only: [:dev, :test], runtime: false}

@@ -1,20 +1,19 @@
 <div class="mx-auto w-full max-w-md">
   <div class="card bg-base-200/30 border border-base-300/80 rounded-box shadow-xl shadow-base-300/10 p-6 sm:p-8">
     <h1 class="font-display text-2xl font-semibold mb-1">Sign in</h1>
+    
     <p class="text-sm text-base-content/65 mb-6">
       Welcome back—use your email or a provider below.
     </p>
-
+    
     <%= if @error_message do %>
       <p class="alert alert-error text-sm mb-4" role="alert">{@error_message}</p>
     <% end %>
-
+    
     <form action={~p"/auth/login"} method="post" class="space-y-4">
       <input type="hidden" name="_csrf_token" value={get_csrf_token()} />
       <div class="fieldset">
-        <label class="label" for="user_email">
-          <span class="label-text">Email</span>
-        </label>
+        <label class="label" for="user_email"><span class="label-text">Email</span></label>
         <input
           class="input input-bordered w-full"
           type="email"
@@ -24,10 +23,9 @@
           required
         />
       </div>
+      
       <div class="fieldset">
-        <label class="label" for="user_password">
-          <span class="label-text">Password</span>
-        </label>
+        <label class="label" for="user_password"><span class="label-text">Password</span></label>
         <input
           class="input input-bordered w-full"
           type="password"
@@ -37,16 +35,16 @@
           required
         />
       </div>
-      <button type="submit" class="btn btn-primary w-full">Sign in</button>
+       <button type="submit" class="btn btn-primary w-full">Sign in</button>
     </form>
-
+    
     <div class="divider text-xs text-base-content/50">or continue with</div>
-
+    
     <div class="grid grid-cols-2 gap-2">
       <a href={~p"/auth/oauth/google"} class="btn btn-outline btn-sm border-base-300">Google</a>
       <a href={~p"/auth/oauth/github"} class="btn btn-outline btn-sm border-base-300">GitHub</a>
     </div>
-
+    
     <p class="mt-6 text-sm text-center text-base-content/70">
       <a class="link link-hover link-primary" href={~p"/auth/register"}>Create an account</a>
       <span class="mx-2 text-base-content/40" aria-hidden="true">·</span>

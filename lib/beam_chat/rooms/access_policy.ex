@@ -71,7 +71,7 @@ defmodule BeamChat.Rooms.AccessPolicy do
   get a LiveKit token. Banned users never get a token; secret rooms always
   require membership.
   """
-  @spec can_video?(%Room{}, %User{} | nil) :: boolean()
+  @spec can_video?(struct(), struct() | nil) :: boolean()
   def can_video?(%Room{}, %User{is_banned: true}), do: false
   def can_video?(%Room{}, nil), do: false
 

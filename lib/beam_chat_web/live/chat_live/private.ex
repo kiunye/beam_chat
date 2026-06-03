@@ -178,21 +178,25 @@ defmodule BeamChatWeb.ChatLive.Private do
               <h1 class="font-display text-2xl font-semibold tracking-tight text-base-content">
                 Direct messages
               </h1>
+              
               <p class="text-sm text-base-content/70 mt-1">
                 Private 1:1 threads — persisted to your conversations.
               </p>
             </div>
+            
             <.link navigate={~p"/rooms"} class="btn btn-ghost btn-sm" id="nav-rooms-from-dm">
               Rooms
             </.link>
           </div>
-
+          
           <div class="rounded-box border border-base-300 bg-base-200/30 p-4 space-y-3">
             <h2 class="text-sm font-semibold text-base-content">Start a conversation</h2>
+            
             <p class="text-xs text-base-content/65">
               Paste another member’s user id (UUID from profile/admin tools). A richer people picker
               ships later.
             </p>
+            
             <.form
               for={@compose_form}
               id="dm-compose-form"
@@ -211,11 +215,11 @@ defmodule BeamChatWeb.ChatLive.Private do
               </button>
             </.form>
           </div>
-
+          
           <div :if={@conversation_rows == []} class="text-sm text-base-content/60 py-8 text-center">
             No conversations yet — start one above.
           </div>
-
+          
           <ul :if={@conversation_rows != []} class="space-y-2" id="conversation-list">
             <li :for={{conv, other, last} <- @conversation_rows} id={"conv-row-" <> conv.id}>
               <.link
@@ -230,22 +234,19 @@ defmodule BeamChatWeb.ChatLive.Private do
                     {Calendar.strftime(last.inserted_at, "%d %b %H:%M")}
                   </span>
                 </div>
-                <p :if={last} class="text-sm text-base-content/70 truncate mt-1">
-                  {last.content}
-                </p>
+                
+                <p :if={last} class="text-sm text-base-content/70 truncate mt-1">{last.content}</p>
               </.link>
             </li>
           </ul>
-
+          
           <div
             :if={@inbox_meta.total_count > @inbox_meta.limit}
             class="flex flex-wrap items-center justify-center gap-3 pt-4 text-sm text-base-content/70"
           >
             <span>
               Page {@inbox_meta.page} of {@inbox_meta.page_count}
-              <span class="text-base-content/50">
-                ({@inbox_meta.total_count} conversations)
-              </span>
+              <span class="text-base-content/50">({@inbox_meta.total_count} conversations)</span>
             </span>
             <div class="flex gap-2">
               <.link
@@ -273,11 +274,9 @@ defmodule BeamChatWeb.ChatLive.Private do
             <.link navigate={~p"/messages"} class="btn btn-ghost btn-sm" id="back-to-inbox">
               ← Inbox
             </.link>
-            <h1 class="font-display text-xl font-semibold">
-              {@other_user && @other_user.username}
-            </h1>
+            <h1 class="font-display text-xl font-semibold">{@other_user && @other_user.username}</h1>
           </div>
-
+          
           <section class="rounded-box border border-base-300 bg-base-100 flex flex-col min-h-[24rem]">
             <div
               id="dm-scroll"
@@ -291,6 +290,7 @@ defmodule BeamChatWeb.ChatLive.Private do
               >
                 No messages yet.
               </div>
+              
               <div :for={{mid, msg} <- @streams.messages} id={mid} class="text-sm flex gap-2">
                 <span class="w-24 shrink-0 text-xs text-base-content/55 truncate">
                   {msg.sender && msg.sender.username}
@@ -298,7 +298,7 @@ defmodule BeamChatWeb.ChatLive.Private do
                 <p class="flex-1 whitespace-pre-wrap break-words">{msg.content}</p>
               </div>
             </div>
-
+            
             <.form
               for={@message_form}
               id="dm-message-form"
@@ -311,10 +311,7 @@ defmodule BeamChatWeb.ChatLive.Private do
                 class="textarea textarea-bordered flex-1 min-h-[3rem]"
                 placeholder="Write a direct message…"
                 rows="2"
-              />
-              <button type="submit" class="btn btn-primary self-end" id="send-dm">
-                Send
-              </button>
+              /> <button type="submit" class="btn btn-primary self-end" id="send-dm">Send</button>
             </.form>
           </section>
         </div>

@@ -1,12 +1,13 @@
 <div class="mx-auto w-full max-w-md">
   <div class="card bg-base-200/30 border border-base-300/80 rounded-box shadow-xl shadow-base-300/10 p-6 sm:p-8">
     <h1 class="font-display text-2xl font-semibold mb-1">Create account</h1>
+    
     <p class="text-sm text-base-content/65 mb-6">Choose a username and a strong password.</p>
-
+    
     <%= if @error_message do %>
       <p class="alert alert-error text-sm mb-4" role="alert">{@error_message}</p>
     <% end %>
-
+    
     <.form :let={f} for={@changeset} action={~p"/auth/register"} method="post" class="space-y-4">
       <.input field={f[:username]} type="text" label="Username" required autocomplete="username" />
       <.input field={f[:email]} type="email" label="Email" required autocomplete="email" />
@@ -16,10 +17,9 @@
         label="Password"
         required
         autocomplete="new-password"
-      />
-      <button type="submit" class="btn btn-primary w-full">Create account</button>
+      /> <button type="submit" class="btn btn-primary w-full">Create account</button>
     </.form>
-
+    
     <p class="mt-6 text-sm text-center text-base-content/70">
       <a class="link link-hover link-primary" href={~p"/auth/login"}>Already have an account?</a>
     </p>
