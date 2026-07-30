@@ -59,13 +59,13 @@ defmodule BeamChatWeb.RoomLive.Index do
     <div class="space-y-8">
       <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 class="font-display text-2xl font-semibold tracking-tight text-base-content">
-            Rooms
-          </h1>
+          <h1 class="font-display text-2xl font-semibold tracking-tight text-base-content">Rooms</h1>
+          
           <p class="text-sm text-base-content/70 mt-1">
             Browse public and member-visible spaces. Secret rooms only appear when you belong.
           </p>
         </div>
+        
         <.link
           navigate={~p"/messages"}
           class="btn btn-outline btn-sm shrink-0"
@@ -74,7 +74,7 @@ defmodule BeamChatWeb.RoomLive.Index do
           Direct messages
         </.link>
       </div>
-
+      
       <.form
         for={@form}
         id="room-filter-form"
@@ -90,6 +90,7 @@ defmodule BeamChatWeb.RoomLive.Index do
             phx-debounce="400"
           />
         </div>
+        
         <div class="w-full sm:w-56">
           <.input
             field={@form[:category_id]}
@@ -100,17 +101,16 @@ defmodule BeamChatWeb.RoomLive.Index do
           />
         </div>
       </.form>
-
+      
       <div
         :if={@rooms == []}
         class="rounded-box border border-base-300 bg-base-200/40 p-8 text-center"
       >
         <p class="text-base-content/80 font-medium">No rooms match your filters</p>
-        <p class="text-sm text-base-content/60 mt-2">
-          Try clearing search or pick another category.
-        </p>
+        
+        <p class="text-sm text-base-content/60 mt-2">Try clearing search or pick another category.</p>
       </div>
-
+      
       <ul :if={@rooms != []} class="grid gap-3 sm:grid-cols-2" id="room-list">
         <li :for={room <- @rooms} id={"room-#{room.id}"}>
           <.link
@@ -123,28 +123,27 @@ defmodule BeamChatWeb.RoomLive.Index do
             <div class="flex items-start justify-between gap-2">
               <div class="min-w-0">
                 <p class="font-display font-semibold text-base-content truncate">{room.name}</p>
+                
                 <p class="text-xs text-base-content/55 truncate">@{room.slug}</p>
               </div>
+              
               <span :if={room.type != "public"} class="badge badge-sm badge-ghost shrink-0">
                 {room.type}
               </span>
             </div>
-            <p :if={room.category} class="text-xs text-base-content/60 mt-2">
-              {room.category.name}
-            </p>
+            
+            <p :if={room.category} class="text-xs text-base-content/60 mt-2">{room.category.name}</p>
           </.link>
         </li>
       </ul>
-
+      
       <div
         :if={@room_list_meta.total_count > @room_list_meta.limit}
         class="flex flex-wrap items-center justify-center gap-3 pt-4 text-sm text-base-content/70"
       >
         <span>
           Page {@room_list_meta.page} of {@room_list_meta.page_count}
-          <span class="text-base-content/50">
-            ({@room_list_meta.total_count} rooms)
-          </span>
+          <span class="text-base-content/50">({@room_list_meta.total_count} rooms)</span>
         </span>
         <div class="flex gap-2">
           <.link

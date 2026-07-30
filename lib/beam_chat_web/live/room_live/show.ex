@@ -6,6 +6,7 @@ defmodule BeamChatWeb.RoomLive.Show do
   alias BeamChat.Rooms
   alias BeamChat.Rooms.AccessPolicy
   alias BeamChat.Rooms.Room
+  alias BeamChat.Video.TokenService
   alias BeamChat.Wallet
   alias BeamChatWeb.RoomPresence
 
@@ -44,6 +45,8 @@ defmodule BeamChatWeb.RoomLive.Show do
           |> assign(:presence_list, %{})
           |> assign(:presence_list_sorted, [])
           |> assign(:message_form, message_form)
+          |> assign(:can_video, can_video?(user, room))
+          |> assign(:video_configured, video_configured?())
           |> stream(:messages, messages, dom_id: &message_dom_id/1)
 
         socket =
@@ -220,20 +223,48 @@ defmodule BeamChatWeb.RoomLive.Show do
     {:noreply, assign(socket, :typing_clear_timer_ref, timer_ref)}
   end
 
+  # Video events sent from the client-side LiveKitRoom hook are forwarded
+  # to the VideoLive LiveComponent (id="video-panel") for state tracking.
+  def handle_event("video_connected", params, socket) do
+    send_update(BeamChatWeb.VideoLive, id: "video-panel", video_state: :connected)
+
+    {:noreply,
+     socket
+     |> assign_video_participant_count(params)}
+  end
+
+  def handle_event("video_disconnected", _params, socket) do
+    send_update(BeamChatWeb.VideoLive, id: "video-panel", video_state: :idle)
+    {:noreply, socket}
+  end
+
+  def handle_event("video_error", %{"message" => message}, socket) do
+    send_update(BeamChatWeb.VideoLive,
+      id: "video-panel",
+      video_state: :error,
+      video_error: message
+    )
+
+    {:noreply, socket}
+  end
+
+  defp assign_video_participant_count(socket, %{"participants" => n}) when is_integer(n),
+    do: assign(socket, :participant_count, n)
+
+  defp assign_video_participant_count(socket, _), do: socket
+
   @impl true
   def render(assigns) do
     ~H"""
     <div class="space-y-6">
       <div class="flex flex-wrap items-center gap-3">
-        <.link navigate={~p"/rooms"} class="btn btn-ghost btn-sm" id="back-to-rooms">
-          ← Rooms
-        </.link>
+        <.link navigate={~p"/rooms"} class="btn btn-ghost btn-sm" id="back-to-rooms">← Rooms</.link>
         <h1 class="font-display text-xl font-semibold tracking-tight text-base-content">
           {@room.name}
         </h1>
-        <span class="badge badge-ghost badge-sm">@{@room.slug}</span>
+         <span class="badge badge-ghost badge-sm">@{@room.slug}</span>
       </div>
-
+      
       <%= case @access do %>
         <% {:blocked, :upgrade_required} -> %>
           <div
@@ -241,10 +272,12 @@ defmodule BeamChatWeb.RoomLive.Show do
             id="access-upgrade-panel"
           >
             <h2 class="font-display font-semibold text-lg text-base-content">Paid room</h2>
+            
             <p class="text-sm text-base-content/80">
               Subscribe with your wallet balance ({format_money(@wallet_balance)} {@room.currency} available).
               Price: {format_money(@room.price || Decimal.new(0))} {@room.currency} for 30 days.
             </p>
+            
             <div class="flex flex-wrap gap-2">
               <%= if sufficient_for_paid_room?(@wallet_balance, @room.price) do %>
                 <button
@@ -260,9 +293,7 @@ defmodule BeamChatWeb.RoomLive.Show do
                   Top up wallet
                 </.link>
               <% end %>
-              <.link navigate={~p"/rooms"} class="btn btn-ghost btn-sm">
-                Browse other rooms
-              </.link>
+               <.link navigate={~p"/rooms"} class="btn btn-ghost btn-sm">Browse other rooms</.link>
             </div>
           </div>
         <% {:blocked, :membership_required} -> %>
@@ -271,22 +302,23 @@ defmodule BeamChatWeb.RoomLive.Show do
             id="access-request-panel"
           >
             <h2 class="font-display font-semibold text-lg text-base-content">Membership required</h2>
+            
             <p class="text-sm text-base-content/80">
               This room is private or secret. Request access from the owner or a moderator, or use an
               invite link when your host shares one.
             </p>
+            
             <ul class="text-sm text-base-content/70 list-disc pl-5 space-y-1">
               <li>Owners can add members from the moderation tools (coming soon).</li>
+              
               <li>If you were invited, accept the invite from your email or dashboard.</li>
             </ul>
-            <.link navigate={~p"/rooms"} class="btn btn-outline btn-sm">
-              Back to directory
-            </.link>
+             <.link navigate={~p"/rooms"} class="btn btn-outline btn-sm">Back to directory</.link>
           </div>
         <% {:blocked, :secret_forbidden} -> %>
           <div class="rounded-box border border-error/40 bg-error/10 p-6" id="access-secret-panel">
             <p class="text-sm text-base-content/90">You do not have access to this secret room.</p>
-            <.link navigate={~p"/rooms"} class="btn btn-ghost btn-sm mt-3">Leave</.link>
+             <.link navigate={~p"/rooms"} class="btn btn-ghost btn-sm mt-3">Leave</.link>
           </div>
         <% :ok -> %>
           <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_14rem] items-stretch">
@@ -306,6 +338,7 @@ defmodule BeamChatWeb.RoomLive.Show do
                 >
                   No messages yet — say hello.
                 </div>
+                
                 <div
                   :for={{mid, msg} <- @streams.messages}
                   id={mid}
@@ -314,21 +347,23 @@ defmodule BeamChatWeb.RoomLive.Show do
                   <div class="shrink-0 w-24 text-xs text-base-content/55 truncate">
                     {display_name(msg.sender)}
                   </div>
+                  
                   <div class="min-w-0 flex-1">
                     <p class="text-base-content whitespace-pre-wrap break-words">{msg.content}</p>
+                    
                     <p class="text-[0.65rem] text-base-content/45 mt-0.5">
                       {format_time(msg.inserted_at)}
                     </p>
                   </div>
                 </div>
               </div>
-
+              
               <div class="border-t border-base-300 px-3 py-2 min-h-[2.5rem] text-xs text-base-content/65">
                 <%= if typing_line(@typing_user_ids, @current_user.id) != "" do %>
                   <span id="typing-indicator">{typing_line(@typing_user_ids, @current_user.id)}</span>
                 <% end %>
               </div>
-
+              
               <.form
                 for={@message_form}
                 id="room-message-form"
@@ -350,7 +385,7 @@ defmodule BeamChatWeb.RoomLive.Show do
                 </button>
               </.form>
             </section>
-
+            
             <aside
               class="rounded-box border border-base-300 bg-base-200/40 p-3"
               id="room-presence-panel"
@@ -358,6 +393,7 @@ defmodule BeamChatWeb.RoomLive.Show do
               <h2 class="text-xs font-semibold uppercase tracking-wide text-base-content/60 mb-2">
                 Here now
               </h2>
+              
               <ul class="space-y-2 text-sm" id="presence-list">
                 <li
                   :for={{uid, data} <- @presence_list_sorted}
@@ -365,13 +401,22 @@ defmodule BeamChatWeb.RoomLive.Show do
                 >
                   <span class="font-medium text-base-content truncate block">
                     {presence_label(uid, data)}
-                  </span>
-                  <span class="text-[0.65rem] text-success">● online</span>
+                  </span> <span class="text-[0.65rem] text-success">● online</span>
                 </li>
               </ul>
+              
               <p :if={map_size(@presence_list) == 0} class="text-xs text-base-content/55">
                 Connecting…
               </p>
+              
+              <.live_component
+                :if={@video_configured}
+                module={BeamChatWeb.VideoLive}
+                id="video-panel"
+                room={@room}
+                current_user={@current_user}
+                can_video={@can_video}
+              />
             </aside>
           </div>
       <% end %>
@@ -433,4 +478,15 @@ defmodule BeamChatWeb.RoomLive.Show do
   end
 
   defp sufficient_for_paid_room?(_, _), do: false
+
+  defp can_video?(user, room), do: AccessPolicy.can_video?(room, user)
+
+  defp video_configured? do
+    case TokenService.generate_token(%{id: Ecto.UUID.autogenerate()}, Ecto.UUID.autogenerate()) do
+      {:ok, _payload} -> true
+      {:error, :not_configured} -> false
+    end
+  rescue
+    _ -> false
+  end
 end

@@ -1,49 +1,59 @@
 <div class="grid gap-12 lg:gap-16 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)] lg:items-start">
   <div class="space-y-8">
     <p class="text-sm font-medium text-primary uppercase tracking-widest">Real-time community</p>
+    
     <h1 class="font-display text-4xl sm:text-5xl font-semibold tracking-tight text-balance leading-tight">
       Chat that stays fast at any scale.
     </h1>
+    
     <p class="text-lg text-base-content/75 max-w-xl leading-relaxed">
       Beam Chat is built for rooms, direct messages, and live presence—powered by Phoenix and LiveView so your UI stays responsive without shipping a separate SPA.
     </p>
+    
     <div class="flex flex-col sm:flex-row gap-3 sm:items-center">
       <a href={~p"/auth/register"} class="btn btn-primary btn-lg px-8">Create an account</a>
       <a href={~p"/auth/login"} class="btn btn-outline btn-lg border-base-300">Sign in</a>
     </div>
+    
     <dl class="grid grid-cols-2 sm:grid-cols-3 gap-6 pt-4 border-t border-base-300/80 max-w-lg">
       <div>
         <dt class="text-xs font-medium uppercase tracking-wide text-base-content/50">
           Transport
         </dt>
+        
         <dd class="mt-1 font-display text-lg font-semibold">WebSockets</dd>
       </div>
+      
       <div>
         <dt class="text-xs font-medium uppercase tracking-wide text-base-content/50">Stack</dt>
+        
         <dd class="mt-1 font-display text-lg font-semibold">Elixir · LiveView</dd>
       </div>
+      
       <div class="col-span-2 sm:col-span-1">
         <dt class="text-xs font-medium uppercase tracking-wide text-base-content/50">Themes</dt>
+        
         <dd class="mt-1 font-display text-lg font-semibold">Light · Dark · System</dd>
       </div>
     </dl>
   </div>
-
+  
   <aside class="card bg-base-200/40 border border-base-300/80 shadow-lg shadow-base-300/20 rounded-box p-6 sm:p-8 space-y-6">
     <h2 class="font-display text-lg font-semibold">What ships next</h2>
+    
     <ul class="space-y-4 text-sm text-base-content/80">
       <li class="flex gap-3">
         <span class="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary text-xs font-bold">
           1
-        </span>
-        <span>Clustered room processes, presence, and moderated message pipelines.</span>
+        </span> <span>Clustered room processes, presence, and moderated message pipelines.</span>
       </li>
+      
       <li class="flex gap-3">
         <span class="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary text-xs font-bold">
           2
-        </span>
-        <span>Wallet-backed subscriptions and integrations tuned for your market.</span>
+        </span> <span>Wallet-backed subscriptions and integrations tuned for your market.</span>
       </li>
+      
       <li class="flex gap-3">
         <span class="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary text-xs font-bold">
           3
@@ -53,6 +63,7 @@
         </span>
       </li>
     </ul>
+    
     <div class="rounded-box bg-base-100/60 border border-base-300/60 p-4 text-xs text-base-content/65 leading-relaxed">
       API health check: <a href="/health" class="link link-primary font-medium">GET /health</a>
     </div>

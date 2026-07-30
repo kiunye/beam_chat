@@ -17,6 +17,7 @@
         </span>
       </a>
     </div>
+    
     <div class="navbar-end flex-none">
       <div class="flex flex-wrap items-center justify-end gap-1 sm:gap-2">
         <a href={~p"/"} class="btn btn-ghost btn-sm hidden sm:inline-flex">Home</a>
@@ -44,23 +45,23 @@
           <a href={~p"/auth/login"} class="btn btn-ghost btn-sm">Sign in</a>
           <a href={~p"/auth/register"} class="btn btn-primary btn-sm">Create account</a>
         <% end %>
-        <Layouts.theme_toggle />
+         <Layouts.theme_toggle />
       </div>
     </div>
   </header>
-
+  
   <main id="main-content" class="flex-1 w-full outline-none" tabindex="-1">
     <div class="mx-auto w-full max-w-6xl px-4 sm:px-6 lg:px-8 py-8 sm:py-10">
       {@inner_content}
     </div>
   </main>
-
+  
   <footer class="border-t border-base-300/80 py-6 px-4 sm:px-6 lg:px-8 mt-auto">
     <div class="mx-auto max-w-6xl flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between text-sm text-base-content/60">
       <p>© {Date.utc_today().year} Beam Chat</p>
+      
       <p class="text-xs sm:text-sm">Built with Phoenix &amp; LiveView</p>
     </div>
   </footer>
-
-  <Layouts.flash_group flash={@flash} />
+   <Layouts.flash_group flash={@flash} />
 </div>

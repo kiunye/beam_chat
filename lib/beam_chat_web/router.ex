@@ -70,11 +70,24 @@ defmodule BeamChatWeb.Router do
     get "/health", HealthController, :index
   end
 
+  pipeline :mpesa_webhook do
+    plug BeamChatWeb.Plugs.MpesaWebhookAuth
+  end
+
   scope "/webhooks", BeamChatWeb.Webhooks, as: :webhooks do
     pipe_through :api
 
     post "/paystack", PaystackWebhookController, :create
-    post "/mpesa", MpesaWebhookController, :create
+  end
+
+  scope "/webhooks", BeamChatWeb.Webhooks, as: :webhooks do
+    pipe_through [:api, :mpesa_webhook]
+
+    # The M-Pesa STK callback URL embeds a shared secret in the path:
+    #   https://<host>/webhooks/mpesa/<secret>
+    # The :mpesa_webhook pipeline enforces that the path secret matches
+    # `MPESA_CALLBACK_SECRET` (fail-closed in prod). See SECURITY_REVIEW.md P0 #3.
+    post "/mpesa/:secret", MpesaWebhookController, :create
   end
 
   scope "/api", BeamChatWeb.Api, as: :api do

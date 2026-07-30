@@ -24,9 +24,7 @@ defmodule BeamChatWeb.Layouts do
   def flash_group(assigns) do
     ~H"""
     <div id={@id} aria-live="polite">
-      <.flash kind={:info} flash={@flash} />
-      <.flash kind={:error} flash={@flash} />
-
+      <.flash kind={:info} flash={@flash} /> <.flash kind={:error} flash={@flash} />
       <.flash
         id="client-error"
         kind={:error}
@@ -67,7 +65,6 @@ defmodule BeamChatWeb.Layouts do
       aria-label={gettext("Color theme")}
     >
       <div class="absolute w-1/3 h-[calc(100%-4px)] top-0.5 rounded-full bg-base-100 shadow-sm left-0.5 motion-safe:transition-[left] motion-safe:duration-200 [html[data-theme=light]_&]:left-[33.333%] [html[data-theme=dark]_&]:left-[calc(66.666%-2px)]" />
-
       <button
         type="button"
         class="relative z-10 flex p-2 cursor-pointer w-9 justify-center rounded-full hover:bg-base-100/50"
@@ -77,7 +74,6 @@ defmodule BeamChatWeb.Layouts do
       >
         <.icon name="hero-computer-desktop-micro" class="size-4 opacity-80" />
       </button>
-
       <button
         type="button"
         class="relative z-10 flex p-2 cursor-pointer w-9 justify-center rounded-full hover:bg-base-100/50"
@@ -87,7 +83,6 @@ defmodule BeamChatWeb.Layouts do
       >
         <.icon name="hero-sun-micro" class="size-4 opacity-80" />
       </button>
-
       <button
         type="button"
         class="relative z-10 flex p-2 cursor-pointer w-9 justify-center rounded-full hover:bg-base-100/50"

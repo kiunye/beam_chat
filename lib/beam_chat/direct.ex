@@ -8,6 +8,7 @@ defmodule BeamChat.Direct do
   alias BeamChat.Accounts.User
   alias BeamChat.Direct.Conversation
   alias BeamChat.Direct.DirectMessage
+  alias BeamChat.MessagePipeline.Producer
   alias BeamChat.Repo
 
   @topic_prefix "conversation:"
@@ -183,23 +184,28 @@ defmodule BeamChat.Direct do
     |> Repo.all()
   end
 
-  def send_message(conversation_id, sender_id, content) do
-    content = String.trim(content)
+  def send_message(conversation_id, sender_id, content) when is_binary(conversation_id) and is_binary(sender_id) do
+    trimmed = String.trim(content || "")
 
-    attrs = %{
-      conversation_id: conversation_id,
-      sender_id: sender_id,
-      content: content,
-      content_type: "text"
-    }
+    if trimmed == "" do
+      {:error, :empty_content}
+    else
+      Producer.push_messages(BeamChat.MessagePipeline, [
+        %{
+          kind: :direct,
+          conversation_id: conversation_id,
+          user_id: sender_id,
+          content: trimmed,
+          inserted_at: nil
+        }
+      ])
 
-    with {:ok, msg} <-
-           %DirectMessage{}
-           |> DirectMessage.changeset(attrs)
-           |> Repo.insert() do
-      msg = Repo.preload(msg, :sender)
-      broadcast_new_message(msg)
-      {:ok, msg}
+      # Persistence happens asynchronously in the Broadway pipeline. The
+      # `{:new_direct_message, ...}` PubSub event fans out to subscribed
+      # LiveViews as soon as the batch is persisted, so the caller (the
+      # DM LiveView) does not need a synchronous handle on the persisted row
+      # — same pattern as `Rooms.RoomLive.Show.handle_event("send", ...)`.
+      :ok
     end
   end
 end

@@ -37,4 +37,9 @@ beam_chat-*.tar
 # In case you use Node.js/npm, you want to ignore these.
 npm-debug.log
 /assets/node_modules/
+/assets/package-lock.json
+
+# Local environment overrides (see .env.example)
+.env
+.env.local
 
