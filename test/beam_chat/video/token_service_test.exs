@@ -61,7 +61,7 @@ defmodule BeamChat.Video.TokenServiceTest do
       assert claims["iss"] == "test_api_key_xxxxxxxxxxxxxxxxxxxxxx"
     end
 
-    test "token has 1h TTL by default" do
+    test "token has 10m TTL by default" do
       user = %User{id: "11111111-1111-1111-1111-111111111111", username: "alice"}
       room_id = "22222222-2222-2222-2222-222222222222"
 
@@ -69,10 +69,12 @@ defmodule BeamChat.Video.TokenServiceTest do
       assert {:ok, claims} = TokenService.verify_token(jwt)
 
       # The LiveKit SDK uses `nbf` (not-before) and `exp` (expires). The diff
-      # between them equals the TTL.
+      # between them equals the TTL. We ship a 10-minute (600s) TTL so a
+      # banned-after-token-issued user loses publish rights within 10 min
+      # at worst. See SECURITY_REVIEW.md P0 #2 for rationale.
       assert is_integer(claims["exp"])
       assert is_integer(claims["nbf"])
-      assert_in_delta claims["exp"] - claims["nbf"], 3_600, 5
+      assert_in_delta claims["exp"] - claims["nbf"], 600, 5
     end
 
     test "honours custom ttl option" do

@@ -19,7 +19,7 @@ defmodule BeamChat.Video.TokenService do
   alias Livekit.Config, as: LKConfig
   alias Livekit.Grants
 
-  @default_ttl_seconds 3_600
+  @default_ttl_seconds 600
 
   @type token_payload :: %{
           token: String.t(),
@@ -35,6 +35,26 @@ defmodule BeamChat.Video.TokenService do
   Returns `{:ok, payload}` with the JWT, the public URL, and metadata; or
   `{:error, :not_configured}` if LiveKit is not configured (e.g. missing
   `LIVEKIT_API_KEY`).
+
+  ## TTL
+
+  Default TTL is **10 minutes** (#{@default_ttl_seconds}s), not 1 hour.
+
+  Rationale: a banned user who already holds a 1-hour token would retain
+  publish rights until expiry. A short TTL bounds the blast radius — if a
+  user is banned mid-call, the token stops working within 10 minutes. The
+  client can re-join (and re-pass `AccessPolicy`) to receive a new one;
+  banned users will be denied at the policy check before a new token is
+  issued. Long lived keepalive/refresh is a P1+ feature, not in scope here.
+
+  ## Caller responsibility
+
+  This service does **not** re-verify `User.is_banned` against the database.
+  The caller (`VideoLive.handle_event/3` for `join_video`) must perform a
+  fresh `Repo.get_by(User, id: ..., is_banned: false)` lookup before calling
+  `generate_token/3` — see `BeamChatWeb.VideoLive` for the canonical check.
+  Rationale: the user struct held in `socket.assigns.current_user` is
+  populated at socket-connect time from the cookie and may be stale.
   """
   @spec generate_token(%{id: Ecto.UUID.t()}, Ecto.UUID.t(), keyword()) ::
           {:ok, token_payload()} | {:error, :not_configured}

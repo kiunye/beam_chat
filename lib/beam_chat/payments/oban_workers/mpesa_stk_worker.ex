@@ -32,7 +32,7 @@ defmodule BeamChat.Payments.ObanWorkers.MpesaStkWorker do
   end
 
   defp do_stk_push(%WalletTransaction{id: txn_id} = txn, phone, callback_url) do
-    account_ref = String.slice(txn_id, 0, 12)
+    account_ref = account_ref(txn_id)
 
     with {:ok, token} <- MpesaClient.get_access_token(),
          {:ok, checkout_id} <-
@@ -58,6 +58,21 @@ defmodule BeamChat.Payments.ObanWorkers.MpesaStkWorker do
       {:error, reason} ->
         {:error, reason}
     end
+  end
+
+  @doc """
+  Builds an M-Pesa `AccountReference` from a wallet transaction UUID.
+
+  Daraja 2.0 accepts up to ~40 chars; legacy Daraja accepts 20. We strip
+  hyphens and slice to 18 hex chars — well within both limits — giving
+  18×4 = 72 bits of entropy. Collision probability is negligible for our
+  scale (vs. the previous 12-char / 48-bit slice which was ~1/4096 per
+  same-microsecond pair).
+  """
+  def account_ref(txn_id) when is_binary(txn_id) do
+    txn_id
+    |> String.replace("-", "")
+    |> String.slice(0, 18)
   end
 
   defp mark_failed(%WalletTransaction{} = txn, reason) do

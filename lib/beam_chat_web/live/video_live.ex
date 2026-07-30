@@ -12,6 +12,8 @@ defmodule BeamChatWeb.VideoLive do
 
   use BeamChatWeb, :live_component
 
+  alias BeamChat.Accounts.User
+  alias BeamChat.Repo
   alias BeamChat.Rooms.AccessPolicy
   alias BeamChat.Video.TokenService
 
@@ -44,29 +46,30 @@ defmodule BeamChatWeb.VideoLive do
   @impl true
   def handle_event("join_video", _params, socket) do
     room = socket.assigns.room
-    user = socket.assigns.current_user
+    assigned_user = socket.assigns.current_user
 
-    if AccessPolicy.can_video?(room, user) do
-      case TokenService.generate_token(user, room.id) do
-        {:ok, payload} ->
-          {:noreply,
-           socket
-           |> assign(:video_state, :joining)
-           |> assign(:video_error, nil)
-           |> push_event("livekit_connect", payload)}
+    # Re-fetch the user from the DB so we never issue a LiveKit token based
+    # on a stale `socket.assigns.current_user` struct (which is populated
+    # at socket-connect time from the cookie). A user banned mid-session
+    # must not be able to publish video — the 10-minute TTL on the JWT
+    # bounds the blast radius here, but the fresh fetch closes it entirely.
+    case Repo.get_by(User, id: assigned_user.id, is_banned: false) do
+      nil ->
+        {:noreply,
+         socket
+         |> assign(:video_state, :idle)
+         |> put_flash(:error, "Your account is no longer eligible to join video.")
+         |> assign(:video_error, "Account is banned or missing.")}
 
-        {:error, :not_configured} ->
+      %User{} = fresh_user ->
+        if AccessPolicy.can_video?(room, fresh_user) do
+          issue_token(socket, room, fresh_user)
+        else
           {:noreply,
            socket
            |> assign(:video_state, :idle)
-           |> put_flash(:error, "Video is not configured. Contact an administrator.")
-           |> assign(:video_error, "LiveKit is not configured on this server.")}
-      end
-    else
-      {:noreply,
-       socket
-       |> assign(:video_state, :idle)
-       |> put_flash(:error, "You do not have permission to join the video room.")}
+           |> put_flash(:error, "You do not have permission to join the video room.")}
+        end
     end
   end
 
@@ -170,5 +173,23 @@ defmodule BeamChatWeb.VideoLive do
       </div>
     </div>
     """
+  end
+
+  defp issue_token(socket, room, user) do
+    case TokenService.generate_token(user, room.id) do
+      {:ok, payload} ->
+        {:noreply,
+         socket
+         |> assign(:video_state, :joining)
+         |> assign(:video_error, nil)
+         |> push_event("livekit_connect", payload)}
+
+      {:error, :not_configured} ->
+        {:noreply,
+         socket
+         |> assign(:video_state, :idle)
+         |> put_flash(:error, "Video is not configured. Contact an administrator.")
+         |> assign(:video_error, "LiveKit is not configured on this server.")}
+    end
   end
 end

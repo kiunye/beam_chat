@@ -2,20 +2,28 @@ defmodule BeamChat.MessagePipeline.Validator do
   @moduledoc """
   Validates incoming chat messages before processing.
 
-  Performs basic validation:
-  - Message presence and type
-  - User authentication
-  - Basic content checks (length, format)
-  - Room access validation (delegated to RoomServer/AccessPolicy)
+  Each message carries a `:kind` discriminator (`:room` or `:direct`) plus
+  the corresponding destination id (`:room_id` or `:conversation_id`). The
+  validator performs:
+
+  - **Structure** — required fields per `kind`, valid UUID/positive-int ids.
+  - **Content** — non-empty, ≤10,000 bytes, trimmed before persistence.
+  - **Destination** — stub stage that reserves a slot for future access
+    checks (e.g. verifying the sender is a conversation participant). The
+    actual moderation rules run in the next pipeline stage (`RuleEngine`).
   """
 
   @typedoc "Room and user identifiers accepted by the pipeline (DB uses UUID strings)."
   @type pipeline_id :: pos_integer() | Ecto.UUID.t()
 
+  @type destination :: :room | :direct
+
   @type message :: %{
-          required(:room_id) => pipeline_id(),
           required(:user_id) => pipeline_id(),
           required(:content) => String.t(),
+          optional(:kind) => destination(),
+          optional(:room_id) => pipeline_id(),
+          optional(:conversation_id) => pipeline_id(),
           optional(:inserted_at) => DateTime.t() | nil
         }
 
@@ -28,23 +36,40 @@ defmodule BeamChat.MessagePipeline.Validator do
     message
     |> validate_structure()
     |> validate_content()
-    |> validate_user_and_room()
+    |> validate_destination()
   end
 
   ## Validation Stages
 
-  defp validate_structure(%{room_id: room_id, user_id: user_id, content: content} = msg)
+  defp validate_structure(%{content: content} = msg)
        when is_binary(content) and byte_size(content) > 0 do
-    if valid_pipeline_id?(room_id) and valid_pipeline_id?(user_id) do
-      {:ok, msg}
-    else
-      {:error, :invalid_message_structure}
+    case kind(msg) do
+      :room ->
+        with %{room_id: room_id, user_id: user_id} <- msg,
+             true <- valid_pipeline_id?(room_id),
+             true <- valid_pipeline_id?(user_id) do
+          {:ok, msg}
+        else
+          _ -> {:error, :invalid_message_structure}
+        end
+
+      :direct ->
+        with %{conversation_id: conv_id, user_id: user_id} <- msg,
+             true <- valid_pipeline_id?(conv_id),
+             true <- valid_pipeline_id?(user_id) do
+          {:ok, Map.put(msg, :kind, :direct)}
+        else
+          _ -> {:error, :invalid_message_structure}
+        end
     end
   end
 
   defp validate_structure(_msg) do
     {:error, :invalid_message_structure}
   end
+
+  defp kind(%{kind: k}) when k in [:room, :direct], do: k
+  defp kind(_), do: :room
 
   defp validate_content({:ok, %{content: content} = msg}) do
     # Check message length (reasonable limits)
@@ -57,21 +82,13 @@ defmodule BeamChat.MessagePipeline.Validator do
 
   defp validate_content({:error, _reason} = error), do: error
 
-  defp validate_user_and_room({:ok, %{user_id: user_id, room_id: room_id} = msg}) do
-    # In a full implementation, we would check:
-    # 1. User exists and is active
-    # 2. User has access to the room (via AccessPolicy)
-    # 3. Room exists and is active
-    # For MVP, we'll do basic validation and defer to RoomServer for access control
-
-    if valid_pipeline_id?(user_id) and valid_pipeline_id?(room_id) do
-      {:ok, msg}
-    else
-      {:error, :invalid_user_or_room}
-    end
-  end
-
-  defp validate_user_and_room({:error, _reason} = error), do: error
+  # Post-content validation stage. The validate_structure stage already
+  # performed `valid_pipeline_id?/1` checks for the destination and user
+  # ids. This stage is a pass-through that exists to reserve a slot for
+  # future per-message authorisation checks (e.g. access policy for DM
+  # participants) without changing the pipeline's call shape.
+  defp validate_destination({:ok, message}), do: {:ok, message}
+  defp validate_destination({:error, _reason} = error), do: error
 
   defp valid_pipeline_id?(id) when is_integer(id), do: id > 0
 

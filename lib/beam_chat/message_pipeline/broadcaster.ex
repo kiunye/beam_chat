@@ -3,10 +3,13 @@ defmodule BeamChat.MessagePipeline.Broadcaster do
   Broadcasts persisted messages to Phoenix.PubSub for real-time delivery.
 
   After messages are persisted to the database, this stage broadcasts them
-  to the appropriate room topics so LiveView clients can receive them in real-time.
+  to the appropriate topics so LiveView clients can receive them in real-time.
+
+  - `BeamChat.Messages.Message` (room) → `room:<room_id>`
+  - `BeamChat.Direct.DirectMessage` (DM) → `conversation:<conversation_id>`
   """
 
-  @type persisted_message :: %BeamChat.Messages.Message{}
+  @type persisted_message :: %BeamChat.Messages.Message{} | %BeamChat.Direct.DirectMessage{}
 
   ### Broadway Batch Processor
 
@@ -22,13 +25,16 @@ defmodule BeamChat.MessagePipeline.Broadcaster do
   ### Message Broadcasting
 
   defp broadcast_message(%BeamChat.Messages.Message{} = message) do
-    # Broadcast to the room topic
     topic = "room:#{message.room_id}"
     event = {:new_message, message}
 
     Phoenix.PubSub.broadcast(BeamChat.PubSub, topic, event)
+  end
 
-    # Also update any presence/typing information if needed
-    # For now, we just broadcast the message
+  defp broadcast_message(%BeamChat.Direct.DirectMessage{} = message) do
+    # Hand off to Direct so it uses the canonical "conversation:" topic
+    # prefix. This keeps DMs routed through the same code path the legacy
+    # `Direct.send_message/3` used.
+    BeamChat.Direct.broadcast_new_message(message)
   end
 end

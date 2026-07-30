@@ -29,7 +29,10 @@ config :beam_chat, :mpesa,
   shortcode: System.get_env("MPESA_SHORTCODE", ""),
   passkey: System.get_env("MPESA_PASSKEY", ""),
   base_url: System.get_env("MPESA_BASE_URL", "https://sandbox.safaricom.co.ke"),
-  stk_callback_url: System.get_env("MPESA_STK_CALLBACK_URL", "")
+  stk_callback_url: System.get_env("MPESA_STK_CALLBACK_URL", ""),
+  # Shared secret embedded in the callback URL path. **Required in prod** —
+  # empty default fails closed. See BeamChatWeb.Plugs.MpesaWebhookAuth.
+  callback_secret: System.get_env("MPESA_CALLBACK_SECRET", "")
 
 config :beam_chat,
   oauth: [

@@ -158,11 +158,15 @@ defmodule BeamChatWeb.ChatLive.Private do
     conv = socket.assigns.conversation
     user = socket.assigns.current_user
 
+    # `Direct.send_message/3` now enqueues into the Broadway pipeline, so it
+    # returns `:ok` synchronously. The persisted `DirectMessage` and its
+    # PubSub broadcast arrive asynchronously (≤5s batch_timeout) and are
+    # appended to the stream by `handle_info({:new_direct_message, ...}, ...)`.
     case Direct.send_message(conv.id, user.id, content) do
-      {:ok, _} ->
+      :ok ->
         {:noreply, assign(socket, :message_form, to_form(%{"content" => ""}, as: :message))}
 
-      {:error, _} ->
+      {:error, _reason} ->
         {:noreply, put_flash(socket, :error, "Could not send that message.")}
     end
   end

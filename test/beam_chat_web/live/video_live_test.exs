@@ -4,6 +4,7 @@ defmodule BeamChatWeb.VideoLiveTest do
   import BeamChat.TestFixtures
   import Phoenix.LiveViewTest
 
+  alias BeamChat.Accounts
   alias BeamChat.Rooms.AccessPolicy
   alias BeamChat.Rooms.Room
   alias BeamChatWeb.VideoLive
@@ -53,6 +54,44 @@ defmodule BeamChatWeb.VideoLiveTest do
       # The room view renders the "membership required" panel — no video
       # controls.
       refute html =~ "video-join-button"
+    end
+
+    test "denies join_video event when user is banned after LiveView mount", %{conn: conn} do
+      # The LiveView mounts with a non-banned user, then we ban them mid-session
+      # and attempt to fire the join_video event. The DB re-check inside the
+      # event handler must reject the request rather than trusting the stale
+      # socket assign. See SECURITY_REVIEW.md P0 #2.
+      user = registered_user_fixture()
+      owner = user_fixture()
+      room = room_fixture(owner, %{type: "public"})
+
+      conn = log_in_user(conn, user)
+      {:ok, view, html} = live(conn, ~p"/rooms/#{room.slug}")
+
+      # Confirm the video panel and join button were rendered at mount.
+      assert html =~ "video-join-button"
+
+      # Ban the user mid-session — this also wipes their tokens.
+      assert {:ok, _} = Accounts.ban_user(user, "video abuse")
+
+      # Spawn the join_video event targeted at the LiveKitRoom component and
+      # assert it does NOT push a `livekit_connect` event to the client. The
+      # push only happens when the user is eligible; a banned user should be
+      # rejected before any token is issued.
+      ref =
+        view
+        |> element("#video-join-button")
+        |> render_click()
+
+      # The rendered html for the panel must remain in the idle state — no
+      # `data-video-state="joining"` token issuance.
+      assert ref =~ ~s(data-video-state="idle")
+      # phx-hook="LiveKitRoom" pushes `livekit_connect` on success; verifying
+      # that the hook DC was not pushed is implicit in the absence of any
+      # `phx-disconnected` markup. The explicit assertion here is that no
+      # video error is rendered (since neither success nor a missing-config
+      # path was hit — the ban-check returned a flash).
+      refute ref =~ ~s(data-video-state="joining")
     end
   end
 

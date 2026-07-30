@@ -167,6 +167,59 @@ defmodule BeamChat.Accounts do
     end
   end
 
+  ## Banning
+
+  @doc """
+  Bans a user and invalidates all active sessions/magic-link tokens atomically.
+
+  Returns `{:ok, user}` with the refreshed user struct, or `{:error, changeset}`.
+  After this call, any cookie previously held by `user_id` is dead: the
+  `users_tokens` rows are gone, so `get_user_by_session_token/1` will return `nil`,
+  and the `BeamChatWeb.UserAuth.fetch_current_user` plug will treat the request
+  as logged out (defence in depth, since `is_banned: true` also short-circuits).
+  """
+  def ban_user(%User{id: user_id}, reason \\ nil) when is_binary(user_id) do
+    Repo.transaction(fn ->
+      user = Repo.get!(User, user_id)
+
+      changeset =
+        user
+        |> Ecto.Changeset.change(is_banned: true)
+        |> Ecto.Changeset.put_change(:ban_reason, reason)
+
+      with {:ok, updated} <- Repo.update(changeset),
+           {:ok, _count} <- delete_user_tokens(user_id) do
+        updated
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+    |> case do
+      {:ok, user} -> {:ok, user}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @doc """
+  Clears the ban flag on a user. Tokens are not restored — the user simply
+  re-authenticates via password, magic link, OAuth, or SSO. `ban_reason` is cleared.
+  """
+  def unban_user(%User{id: user_id}) when is_binary(user_id) do
+    case Repo.get(User, user_id) do
+      nil ->
+        {:error, :not_found}
+
+      user ->
+        user
+        |> Ecto.Changeset.change(is_banned: false, ban_reason: nil)
+        |> Repo.update()
+    end
+  end
+
+  defp delete_user_tokens(user_id) do
+    Repo.delete_all(from t in UserToken, where: t.user_id == ^user_id)
+  end
+
   ## SSO JWT (shared secret)
 
   def upsert_user_from_sso_jwt_claims(%{} = claims) do
