@@ -40,6 +40,13 @@ config :phoenix_live_view,
 config :phoenix,
   sort_verified_routes_query_params: true
 
-config :beam_chat, Oban, testing: :inline
+# Inline testing executes jobs synchronously. Plugins are cleared so the
+# Cron jobs (subscription expiry, moderation cache refresh) never fire
+# mid-suite — tests invoke those workers explicitly instead.
+config :beam_chat, Oban, testing: :inline, plugins: []
+
+# Zero stale-window makes RoomServer member eviction testable without sleeps.
+# The periodic sweep timer stays at its 60s default so it never fires in-suite.
+config :beam_chat, :room_member_stale_after_ms, 0
 
 config :beam_chat, :sso_jwt_secret, "test_sso_jwt_secret_min_32_chars______"

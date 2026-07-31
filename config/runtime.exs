@@ -127,6 +127,19 @@ if config_env() == :prod do
 
   config :beam_chat, :sso_jwt_secret, sso_jwt_secret
 
+  # Optional comma-separated list of accepted secrets (current first, then
+  # previous secret(s)) for zero-downtime SSO secret rotation. Empty/absent
+  # falls back to SSO_JWT_SECRET alone. See SECURITY_REVIEW.md P2 #19.
+  sso_jwt_secrets =
+    System.get_env("SSO_JWT_SECRETS")
+    |> case do
+      nil -> []
+      "" -> []
+      value -> value |> String.split(",") |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == ""))
+    end
+
+  config :beam_chat, :sso_jwt_secrets, sso_jwt_secrets
+
   # LiveKit: required in production so we never accidentally use dev keys.
   livekit_url =
     System.get_env("LIVEKIT_URL") ||

@@ -13,12 +13,16 @@ defmodule BeamChat.MessagePipeline do
 
   use Broadway
 
+  require Logger
+
   alias BeamChat.MessagePipeline.Broadcaster
   alias BeamChat.MessagePipeline.Persister
   alias BeamChat.MessagePipeline.RuleEngine
   alias BeamChat.MessagePipeline.Validator
   alias BeamChat.Repo
   alias Broadway.Message
+
+  @telemetry_events [:beam_chat, :message_pipeline]
 
   def start_link(opts \\ []) when is_list(opts) do
     name = Keyword.get(opts, :name, __MODULE__)
@@ -81,6 +85,14 @@ defmodule BeamChat.MessagePipeline do
         {_msg, {:error, _}} -> []
       end)
 
+    failed_count = length(messages) - length(persisted)
+
+    :telemetry.execute(
+      @telemetry_events ++ [:persisted],
+      %{count: length(persisted), failed_count: failed_count},
+      %{}
+    )
+
     # Enrich once per persisted batch so LiveView clients can stream
     # without per-client DB preloads.
     persisted = Repo.preload(persisted, :sender)
@@ -98,6 +110,33 @@ defmodule BeamChat.MessagePipeline do
 
   @impl true
   def handle_failed(messages, _context) do
+    Enum.each(messages, fn %Message{} = message ->
+      reason = failed_reason(message)
+
+      Logger.warning("message_pipeline: dropping failed message",
+        id: message_id(message),
+        reason: format_reason(reason)
+      )
+
+      :telemetry.execute(
+        @telemetry_events ++ [:failed],
+        %{count: 1},
+        %{reason: format_reason(reason)}
+      )
+    end)
+
     messages
   end
+
+  defp failed_reason(%Message{status: {:failed, reason}}), do: reason
+  defp failed_reason(_message), do: :unknown
+
+  defp message_id(%Message{data: data}) when is_map(data) do
+    Map.get(data, :id) || Map.get(data, "id")
+  end
+
+  defp message_id(_message), do: nil
+
+  defp format_reason(reason) when is_atom(reason), do: reason
+  defp format_reason(reason), do: inspect(reason)
 end

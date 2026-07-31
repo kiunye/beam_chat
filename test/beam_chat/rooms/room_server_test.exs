@@ -19,7 +19,7 @@ defmodule BeamChat.Rooms.RoomServerTest do
 
       RoomServer.join_room(room_id, user_id, "Alice")
       {:ok, state} = RoomServer.get_state(room_id)
-      assert state.members == %{user_id => %{name: "Alice", presence: :online}}
+      assert %{name: "Alice", presence: :online, last_seen: _} = state.members[user_id]
 
       RoomServer.leave_room(room_id, user_id)
       {:ok, state} = RoomServer.get_state(room_id)
@@ -54,6 +54,22 @@ defmodule BeamChat.Rooms.RoomServerTest do
       assert Map.has_key?(state, :typing)
       refute Map.has_key?(state, :messages)
       refute Map.has_key?(state, :message_count)
+    end
+
+    test "sweeps stale members (P2 #15)" do
+      # test.exs sets :room_member_stale_after_ms to 0, so any member whose
+      # last_seen is not *exactly now* is stale on the next sweep.
+      room_id = Ecto.UUID.generate()
+      {:ok, pid} = RoomServer.start_link(room_id)
+
+      RoomServer.join_room(room_id, Ecto.UUID.generate(), "Ghost A")
+      RoomServer.join_room(room_id, Ecto.UUID.generate(), "Ghost B")
+      _ = :sys.get_state(pid)
+
+      send(pid, :sweep_stale_members)
+      state = :sys.get_state(pid)
+
+      assert state.members == %{}
     end
   end
 end

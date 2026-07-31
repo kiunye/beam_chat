@@ -7,6 +7,10 @@ defmodule BeamChatWeb.WalletLive.Index do
   alias BeamChat.Payments.PaystackClient
   alias BeamChat.Wallet
 
+  # SECURITY_REVIEW.md P2 #20: same gate as Wallet.allowed_manual_credit?/1 —
+  # `:dev_wallet_credit_build` is false outside dev, so a stray prod config
+  # override can never surface the staff credit form.
+
   @impl true
   def mount(_params, _session, socket) do
     user = socket.assigns.current_user
@@ -26,7 +30,12 @@ defmodule BeamChatWeb.WalletLive.Index do
   end
 
   defp show_staff_panel?(%User{} = u) do
-    User.staff?(u) or Application.get_env(:beam_chat, :allow_dev_wallet_credit, false)
+    User.staff?(u) or dev_wallet_credit_allowed?()
+  end
+
+  defp dev_wallet_credit_allowed? do
+    Application.get_env(:beam_chat, :allow_dev_wallet_credit, false) and
+      Application.get_env(:beam_chat, :dev_wallet_credit_build, false)
   end
 
   @impl true
