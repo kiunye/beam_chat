@@ -18,6 +18,40 @@ config :beam_chat, Oban,
 
 config :beam_chat, :allow_dev_wallet_credit, false
 
+# Usernames that may not be self-claimed via OAuth/SSO/registration. Prevents
+# phishing/impersonation of staff roles and system accounts. See SECURITY_REVIEW.md
+# P1 #12. Hosts may add to this list at runtime via Application.put_env.
+config :beam_chat, :reserved_usernames, [
+  # Generic privileged names
+  "admin",
+  "administrator",
+  "root",
+  "superuser",
+  "system",
+  "support",
+  "staff",
+  "moderator",
+  "mod",
+  "owner",
+  "official",
+  # Brand-internal
+  "beam_chat",
+  "beamchat",
+  "beam-chat",
+  "beamtalk",
+  # Common abuse handles
+  "null",
+  "undefined",
+  "none",
+  "anonymous",
+  "anon",
+  # Reserved pronouns/safety
+  "everyone",
+  "here",
+  "channel",
+  "all"
+]
+
 config :beam_chat, :paystack,
   secret_key: System.get_env("PAYSTACK_SECRET_KEY", ""),
   public_key: System.get_env("PAYSTACK_PUBLIC_KEY", ""),

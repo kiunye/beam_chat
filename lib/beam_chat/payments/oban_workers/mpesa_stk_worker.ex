@@ -8,16 +8,46 @@ defmodule BeamChat.Payments.ObanWorkers.MpesaStkWorker do
   alias BeamChat.Wallet
   alias BeamChat.Wallet.WalletTransaction
 
+  # After this delay, if the STK push has not produced a webhook callback
+  # that flipped the txn to "completed", we mark it "failed" so the user
+  # sees a clean refund/expiry message and the row stops being "pending".
+  # This bounds the lifetime of a pending row regardless of how many Oban
+  # attempts are left. See SECURITY_REVIEW.md P1 #10.
+  @pending_expiry_ms :timer.minutes(5)
+
   @impl Oban.Worker
-  def perform(%Oban.Job{
-        args: %{"user_id" => _user_id, "txn_id" => txn_id, "phone" => phone}
-      }) do
+  def perform(%Oban.Job{attempt: attempt, max_attempts: max_attempts} = job) do
+    %{"user_id" => _user_id, "txn_id" => txn_id, "phone" => phone} = job.args
     txn = Repo.get!(WalletTransaction, txn_id)
 
-    if txn.status != "pending" do
-      :ok
-    else
-      run_stk_for_txn(txn, phone)
+    cond do
+      txn.status == "completed" ->
+        # Webhook beat us to it. Nothing to do.
+        :ok
+
+      txn.status == "failed" ->
+        # Already finalized by a previous attempt's mark_failed.
+        :ok
+
+      true ->
+        case run_stk_for_txn(txn, phone) do
+          :ok ->
+            # STK push accepted by Daraja. Schedule a watchdog: if the
+            # webhook has not flipped the txn to "completed" within
+            # @pending_expiry_ms, mark it "failed".
+            schedule_pending_watchdog(txn.id)
+            :ok
+
+          {:error, reason} when attempt >= max_attempts ->
+            # Last attempt — flip the txn to "failed" so it doesn't leak
+            # as "pending" forever once Oban discards the job.
+            _ = mark_failed(txn, "stk_push_exhausted: #{inspect(reason)}")
+            {:error, reason}
+
+          {:error, reason} ->
+            # Not the last attempt — let Oban retry.
+            {:error, reason}
+        end
     end
   end
 
@@ -73,6 +103,33 @@ defmodule BeamChat.Payments.ObanWorkers.MpesaStkWorker do
     txn_id
     |> String.replace("-", "")
     |> String.slice(0, 18)
+  end
+
+  # Fire-and-forget watchdog. The spawned process checks the txn after the
+  # expiry window; if it is still "pending", it marks it "failed" so the
+  # user-facing "top up pending" UI never gets stuck.
+  defp schedule_pending_watchdog(txn_id) do
+    parent = self()
+
+    spawn(fn ->
+      receive do
+        :ok -> :ok
+      after
+        @pending_expiry_ms ->
+          _ = expire_if_pending(txn_id)
+          send(parent, :ok)
+      end
+    end)
+  end
+
+  defp expire_if_pending(txn_id) do
+    txn = Repo.get(WalletTransaction, txn_id)
+
+    if txn && txn.status == "pending" do
+      mark_failed(txn, "pending_expired_no_callback")
+    else
+      {:ok, :no_op}
+    end
   end
 
   defp mark_failed(%WalletTransaction{} = txn, reason) do

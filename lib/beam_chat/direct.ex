@@ -1,6 +1,30 @@
 defmodule BeamChat.Direct do
   @moduledoc """
   Direct conversations and messages (1:1).
+
+  ## Security — UUID-entropy assumption (SECURITY_REVIEW.md P1 #11)
+
+  The DM topic key is the conversation UUID (`conversation:<uuid>`).
+  Anyone who knows the UUID of a conversation they are not a participant
+  of can subscribe to that PubSub topic and receive the message stream.
+
+  `ChatLive.Private.assign_thread/2` enforces `Direct.participant?/2` at
+  mount time, so the application surface is safe — but the underlying
+  PubSub topic is not access-controlled.
+
+  We rely on the **unguessability of conversation UUIDs** (UUIDv4 —
+  122 bits of entropy) as the security boundary for this. Operators and
+  contributors must:
+
+    - Not weaken the UUID shape (do not switch to sequential or otherwise
+      enumerable identifiers).
+    - Not log conversation UUIDs at INFO level or higher.
+    - Not include conversation UUIDs in URLs that are sent off-platform
+      (e.g. email notifications) without an additional auth check.
+
+  Defence in depth: per-user rate limiting on `/messages/:id` is enforced
+  by `BeamChatWeb.ChatLive.Private.handle_show/2` to bound enumeration
+  attempts.
   """
 
   import Ecto.Query
@@ -184,7 +208,9 @@ defmodule BeamChat.Direct do
     |> Repo.all()
   end
 
-  def send_message(conversation_id, sender_id, content) when is_binary(conversation_id) and is_binary(sender_id) do
+  @spec send_message(Ecto.UUID.t(), Ecto.UUID.t(), String.t()) :: :ok | {:error, :empty_content}
+  def send_message(conversation_id, sender_id, content)
+      when is_binary(conversation_id) and is_binary(sender_id) do
     trimmed = String.trim(content || "")
 
     if trimmed == "" do

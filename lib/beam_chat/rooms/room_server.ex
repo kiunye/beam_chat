@@ -1,22 +1,32 @@
 defmodule BeamChat.Rooms.RoomServer do
-  @max_buffer_messages 100
-
   @moduledoc """
-  GenServer managing room state for distributed chat rooms.
+  GenServer managing room-level ephemeral state for distributed chat rooms.
 
-  State:
-    %{
-      room_id: room_id(),
-      messages: list(),
-      message_count: non_neg_integer(),
-      members: map(),
-      typing: map(),
-      ref: reference()
-    }
+  Owns:
 
-    Messages are kept in a ring buffer (last #{@max_buffer_messages} messages, newest first).
-    Members map: user_id -> %{name: string(), presence: :online | :away}
-    Typing map: user_id -> timestamp
+    - `members` — user_id → %{name, presence} for join/leave accounting.
+    - `typing`  — user_id → timestamp for typing-indicator broadcasts.
+    - `idle shutdown` — 10-minute timer that stops the GenServer when the
+      room has no members.
+
+  The room server does **not** own messages. Message persistence and
+  broadcast go through `BeamChat.MessagePipeline` (Broadway) +
+  `BeamChat.MessagePipeline.Broadcaster`, which guarantees moderation,
+  persistence ordering, and the canonical `room:<room_id>` PubSub topic.
+
+  See SECURITY_REVIEW.md P1 #8.
+
+  State shape:
+
+      %{
+        room_id: room_id(),
+        members: map(),
+        typing:  map(),
+        ref:     reference()
+      }
+
+  Members map: `user_id -> %{name: string(), presence: :online | :away}`
+  Typing map:  `user_id -> timestamp`
   """
 
   use GenServer
@@ -24,16 +34,8 @@ defmodule BeamChat.Rooms.RoomServer do
   # State type
   @type room_id :: Ecto.UUID.t()
   @type user_id :: Ecto.UUID.t()
-  @type message :: %{
-          id: non_neg_integer,
-          user_id: user_id,
-          content: String.t(),
-          inserted_at: DateTime.t()
-        }
   @type state :: %{
           room_id: room_id,
-          messages: list(message),
-          message_count: non_neg_integer(),
           members: map(),
           typing: map(),
           ref: reference
@@ -61,11 +63,6 @@ defmodule BeamChat.Rooms.RoomServer do
     GenServer.cast(via_tuple(room_id), {:leave, user_id})
   end
 
-  @spec send_message(room_id :: room_id(), user_id :: user_id(), content :: String.t()) :: :ok
-  def send_message(room_id, user_id, content) do
-    GenServer.cast(via_tuple(room_id), {:send_message, user_id, content})
-  end
-
   @spec set_typing(room_id :: room_id(), user_id :: user_id(), is_typing :: boolean()) :: :ok
   def set_typing(room_id, user_id, is_typing) do
     if is_typing do
@@ -88,8 +85,6 @@ defmodule BeamChat.Rooms.RoomServer do
 
     state = %{
       room_id: room_id,
-      messages: [],
-      message_count: 0,
       members: %{},
       typing: %{},
       ref: ref
@@ -120,25 +115,6 @@ defmodule BeamChat.Rooms.RoomServer do
 
     # Broadcast member update
     broadcast_room_update(new_state, :member_left, user_id)
-
-    {:noreply, new_state}
-  end
-
-  @impl true
-  def handle_cast({:send_message, user_id, content}, state) do
-    message = %{
-      id: System.unique_integer([:positive]),
-      user_id: user_id,
-      content: content,
-      inserted_at: DateTime.utc_now()
-    }
-
-    {new_messages, new_count} = push_ring_buffer(state.messages, state.message_count, message)
-
-    new_state = %{state | messages: new_messages, message_count: new_count}
-
-    # Broadcast new message
-    broadcast_room_update(new_state, :new_message, message)
 
     {:noreply, new_state}
   end
@@ -210,15 +186,6 @@ defmodule BeamChat.Rooms.RoomServer do
 
   defp via_tuple(room_id) do
     {:via, Horde.Registry, {BeamChat.Registry, {:room, room_id}}}
-  end
-
-  # Newest-first list; cap at @max_buffer_messages without building a list longer than max.
-  defp push_ring_buffer(messages, count, msg) when count < @max_buffer_messages do
-    {[msg | messages], count + 1}
-  end
-
-  defp push_ring_buffer(messages, _count, msg) do
-    {[msg | Enum.take(messages, @max_buffer_messages - 1)], @max_buffer_messages}
   end
 
   defp broadcast_room_update(state, event_type, data) do

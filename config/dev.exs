@@ -103,3 +103,8 @@ config :swoosh, :api_client, false
 
 # Staff wallet test credits + webhook tunnel URLs (see scripts/webhook-dev.sh)
 config :beam_chat, :allow_dev_wallet_credit, true
+
+# Dev-only CSP allowlist for the Figma MCP design-capture script. Must NOT be
+# set in prod.exs — leaks `https://mcp.figma.com` into the prod surface,
+# widening the XSS attack surface. See SECURITY_REVIEW.md P1 #6.
+config :beam_chat, :csp_dev_extras, true

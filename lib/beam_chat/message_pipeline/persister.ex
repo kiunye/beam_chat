@@ -9,6 +9,7 @@ defmodule BeamChat.MessagePipeline.Persister do
 
   require Logger
 
+  alias BeamChat.Direct.DirectMessage
   alias BeamChat.Messages.Message
   alias BeamChat.Repo
 
@@ -25,7 +26,7 @@ defmodule BeamChat.MessagePipeline.Persister do
           moderation_flag: String.t() | nil
         }
 
-  @type persisted_message :: %Message{} | %BeamChat.Direct.DirectMessage{}
+  @type persisted_message :: %Message{} | %DirectMessage{}
 
   @doc """
   Persists each message in order. Returns `{:ok, row}` or `{:error, reason}` per slot,
@@ -94,8 +95,7 @@ defmodule BeamChat.MessagePipeline.Persister do
     direct_initial = insert_kind(:direct, Enum.filter(messages, &direct_kind?/1), now)
 
     {results, {_room_left, _direct_left}} =
-      Enum.map_reduce(messages, {room_initial, direct_initial}, fn msg,
-                                                                   {room_q, direct_q} ->
+      Enum.map_reduce(messages, {room_initial, direct_initial}, fn msg, {room_q, direct_q} ->
         case Map.get(msg, :kind, :room) do
           :room ->
             [head | tail] = room_q
@@ -128,7 +128,7 @@ defmodule BeamChat.MessagePipeline.Persister do
     rows = build_direct_rows(kind_messages, now)
 
     {_count, returned} =
-      Repo.insert_all(BeamChat.Direct.DirectMessage, rows, returning: true)
+      Repo.insert_all(DirectMessage, rows, returning: true)
 
     Enum.map(returned, &{:ok, &1})
   end
@@ -189,7 +189,7 @@ defmodule BeamChat.MessagePipeline.Persister do
     data = Map.put_new(data, :inserted_at, nil)
 
     case persist_dm(data) do
-      {:ok, %BeamChat.Direct.DirectMessage{} = _row} = ok ->
+      {:ok, %DirectMessage{} = _row} = ok ->
         ok
 
       {:error, reason} = err ->
@@ -252,8 +252,8 @@ defmodule BeamChat.MessagePipeline.Persister do
          inserted_at: inserted_at
        }) do
     changeset =
-      %BeamChat.Direct.DirectMessage{}
-      |> BeamChat.Direct.DirectMessage.changeset(%{
+      %DirectMessage{}
+      |> DirectMessage.changeset(%{
         conversation_id: conversation_id,
         sender_id: user_id,
         content: content,

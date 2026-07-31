@@ -26,20 +26,6 @@ defmodule BeamChat.Rooms.RoomServerTest do
       assert state.members == %{}
     end
 
-    test "handles message sending" do
-      room_id = Ecto.UUID.generate()
-      user_id = Ecto.UUID.generate()
-      {:ok, _pid} = RoomServer.start_link(room_id)
-
-      RoomServer.join_room(room_id, user_id, "Bob")
-      RoomServer.send_message(room_id, user_id, "Hello world")
-
-      {:ok, state} = RoomServer.get_state(room_id)
-      assert length(state.messages) == 1
-      assert Enum.at(state.messages, 0).user_id == user_id
-      assert Enum.at(state.messages, 0).content == "Hello world"
-    end
-
     test "handles typing indicators" do
       room_id = Ecto.UUID.generate()
       user_id = Ecto.UUID.generate()
@@ -56,22 +42,18 @@ defmodule BeamChat.Rooms.RoomServerTest do
       assert not Map.has_key?(state.typing, user_id)
     end
 
-    test "maintains message ring buffer (last 100 messages)" do
+    test "exposes a members/typing-only state shape (no message ring buffer)" do
+      # P1 #8 — the room server no longer owns a messages ring buffer.
+      # Persistence + broadcast flow through BeamChat.MessagePipeline.
       room_id = Ecto.UUID.generate()
-      user_id = Ecto.UUID.generate()
       {:ok, _pid} = RoomServer.start_link(room_id)
 
-      RoomServer.join_room(room_id, user_id, "David")
-
-      for i <- 1..150 do
-        RoomServer.send_message(room_id, user_id, "Message #{i}")
-      end
-
       {:ok, state} = RoomServer.get_state(room_id)
-      assert length(state.messages) == 100
-      assert state.message_count == 100
-      assert Enum.at(state.messages, 0).content == "Message 150"
-      assert Enum.at(state.messages, -1).content == "Message 51"
+
+      assert Map.has_key?(state, :members)
+      assert Map.has_key?(state, :typing)
+      refute Map.has_key?(state, :messages)
+      refute Map.has_key?(state, :message_count)
     end
   end
 end

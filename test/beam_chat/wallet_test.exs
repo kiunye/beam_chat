@@ -40,6 +40,56 @@ defmodule BeamChat.WalletTest do
       assert Decimal.compare(w.balance, amount) == :eq
       assert Repo.aggregate(WalletTransaction, :count, :id) == 1
     end
+
+    test "rejects a webhook with non-KES currency in the no-pending-row branch (P1 #9)" do
+      user = user_fixture()
+      {:ok, _} = Wallet.ensure_wallet(user.id)
+      ref = Ecto.UUID.generate()
+      amount = Decimal.new("50.00")
+
+      # Simulate the webhook path where the pending row was never created
+      # (e.g. user closed the browser) but the webhook still arrives.
+      assert {:error, {:unsupported_currency, "USD"}} =
+               Wallet.complete_provider_credit(user.id, amount, "paystack", ref, %{
+                 "currency" => "USD"
+               })
+
+      w = Wallet.get_wallet_for_user(user.id)
+      assert Decimal.compare(w.balance, Decimal.new("0")) == :eq
+
+      assert Repo.aggregate(WalletTransaction, :count, :id) == 0
+    end
+
+    test "accepts a webhook with currency: KES in the no-pending-row branch (P1 #9)" do
+      user = user_fixture()
+      {:ok, _} = Wallet.ensure_wallet(user.id)
+      ref = Ecto.UUID.generate()
+      amount = Decimal.new("50.00")
+
+      assert {:ok, _, %WalletTransaction{status: "completed"}} =
+               Wallet.complete_provider_credit(user.id, amount, "paystack", ref, %{
+                 "currency" => "KES"
+               })
+
+      w = Wallet.get_wallet_for_user(user.id)
+      assert Decimal.compare(w.balance, amount) == :eq
+    end
+
+    test "missing currency is allowed for legacy callers that do not pass it (P1 #9)" do
+      user = user_fixture()
+      {:ok, _} = Wallet.ensure_wallet(user.id)
+      ref = Ecto.UUID.generate()
+      amount = Decimal.new("50.00")
+
+      # No "currency" key in extra metadata — preserved for the legacy
+      # blank-metadata path so existing test setups and call sites do not
+      # break. The KES constraint kicks in only when a currency is present
+      # and is non-KES.
+      assert {:ok, _, _} =
+               Wallet.complete_provider_credit(user.id, amount, "paystack", ref, %{
+                 "source" => "internal"
+               })
+    end
   end
 
   describe "subscribe_paid_room/2" do
