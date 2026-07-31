@@ -23,4 +23,23 @@ defmodule BeamChatWeb.ChatLiveTest do
 
     assert has_element?(view, "#dm-message-form")
   end
+
+  test "messages thread rate-limits excess GETs (P1 #11)", %{conn: conn} do
+    u1 = registered_user_fixture()
+    u2 = user_fixture()
+    conv = conversation_fixture(u1, u2)
+    conn = log_in_user(conn, u1)
+
+    # First 60 navigations stay in the thread.
+    for _ <- 1..60 do
+      {:ok, _view, _html} = live(conn, ~p"/messages/#{conv.id}")
+      conn = recycle(conn)
+    end
+
+    # 61st navigation gets bounced back to the inbox with a flash.
+    {:ok, view, html} = live(conn, ~p"/messages/#{conv.id}")
+
+    assert html =~ "loading that conversation too quickly"
+    assert has_element?(view, "#dm-compose-form")
+  end
 end

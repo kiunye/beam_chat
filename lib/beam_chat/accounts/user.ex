@@ -48,6 +48,10 @@ defmodule BeamChat.Accounts.User do
     ])
     |> validate_required([:username])
     |> validate_length(:username, min: 2, max: 64)
+    |> validate_format(:username, ~r/\A[a-z0-9_]+\z/,
+      message: "must contain only lowercase letters, numbers, and underscores"
+    )
+    |> validate_username_not_reserved()
     |> maybe_validate_email()
     |> validate_inclusion(:role, ~w(member moderator admin))
     |> unique_constraint(:username)
@@ -62,6 +66,10 @@ defmodule BeamChat.Accounts.User do
     |> cast(attrs, [:username, :email, :password])
     |> validate_required([:username, :email, :password])
     |> validate_length(:username, min: 2, max: 64)
+    |> validate_format(:username, ~r/\A[a-z0-9_]+\z/,
+      message: "must contain only lowercase letters, numbers, and underscores"
+    )
+    |> validate_username_not_reserved()
     |> validate_email_format()
     |> validate_length(:password, min: 8, max: 72)
     |> unique_constraint(:username)
@@ -81,10 +89,31 @@ defmodule BeamChat.Accounts.User do
       :metadata
     ])
     |> validate_required([:username, :sso_provider, :sso_uid])
+    |> validate_format(:username, ~r/\A[a-z0-9_]+\z/,
+      message: "must contain only lowercase letters, numbers, and underscores"
+    )
+    |> validate_username_not_reserved()
     |> maybe_validate_email()
     |> unique_constraint(:username)
     |> unique_constraint(:email)
     |> unique_constraint([:sso_provider, :sso_uid], name: :users_sso_unique)
+  end
+
+  @doc """
+  Block on the reserved-username list. The check delegates to
+  `BeamChat.Accounts.reserved_username?/1`, which reads
+  `config :beam_chat, :reserved_usernames`.
+
+  See SECURITY_REVIEW.md P1 #12.
+  """
+  def validate_username_not_reserved(changeset) do
+    validate_change(changeset, :username, fn _, username ->
+      if BeamChat.Accounts.reserved_username?(username) do
+        [username: "is reserved and cannot be used"]
+      else
+        []
+      end
+    end)
   end
 
   def admin?(%__MODULE__{role: "admin"}), do: true

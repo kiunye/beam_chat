@@ -160,11 +160,43 @@ defmodule BeamChat.Accounts do
 
     candidate = "#{base}_#{suffix}"
 
-    if Repo.get_by(User, username: candidate) do
-      "#{base}_#{suffix}_#{System.unique_integer([:positive])}"
-    else
-      candidate
+    cond do
+      reserved_username?(candidate) ->
+        "#{base}_#{suffix}_#{System.unique_integer([:positive])}"
+
+      Repo.get_by(User, username: candidate) ->
+        "#{base}_#{suffix}_#{System.unique_integer([:positive])}"
+
+      true ->
+        candidate
     end
+  end
+
+  @doc """
+  Returns true if `username` is on the configured reserved-username list.
+
+  Reserved usernames may not be self-claimed via OAuth/SSO/registration.
+  See `config :beam_chat, :reserved_usernames` and SECURITY_REVIEW.md P1 #12.
+
+  Comparison is case-insensitive and ignores leading/trailing whitespace.
+  """
+  @spec reserved_username?(String.t()) :: boolean()
+  def reserved_username?(username) when is_binary(username) do
+    normalised = username |> String.trim() |> String.downcase()
+
+    reserved_usernames()
+    |> Enum.any?(&(&1 == normalised))
+  end
+
+  def reserved_username?(_), do: false
+
+  defp reserved_usernames do
+    Application.get_env(:beam_chat, :reserved_usernames, [])
+    |> Enum.map(fn
+      s when is_binary(s) -> s |> String.trim() |> String.downcase()
+      other -> other
+    end)
+    |> Enum.reject(&is_nil/1)
   end
 
   ## Banning

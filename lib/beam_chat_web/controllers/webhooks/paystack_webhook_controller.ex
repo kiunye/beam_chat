@@ -37,7 +37,10 @@ defmodule BeamChatWeb.Webhooks.PaystackWebhookController do
   defp handle_charge_success(data) do
     if data["status"] == "success" and is_binary(data["reference"]) do
       amount_major = paystack_amount_to_decimal(data["amount"])
-      maybe_credit_user(data, amount_major)
+
+      if Decimal.positive?(amount_major) do
+        maybe_credit_user(data, amount_major)
+      end
     end
   end
 
@@ -51,11 +54,17 @@ defmodule BeamChatWeb.Webhooks.PaystackWebhookController do
   end
 
   defp credit_user(uid, amount_major, reference, data) do
+    # Forward the Paystack-reported currency so `Wallet` can cross-check it
+    # against the wallet's KES denomination when no pending row exists.
+    # See SECURITY_REVIEW.md P1 #9.
+    extra_metadata = %{
+      "paystack_id" => data["id"],
+      "source" => "webhook",
+      "currency" => data["currency"]
+    }
+
     _ =
-      Wallet.complete_provider_credit(uid, amount_major, "paystack", reference, %{
-        "paystack_id" => data["id"],
-        "source" => "webhook"
-      })
+      Wallet.complete_provider_credit(uid, amount_major, "paystack", reference, extra_metadata)
 
     :ok
   end

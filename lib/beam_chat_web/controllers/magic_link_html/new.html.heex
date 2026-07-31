@@ -1,15 +1,15 @@
 <div class="mx-auto w-full max-w-md">
   <div class="card bg-base-200/30 border border-base-300/80 rounded-box shadow-xl shadow-base-300/10 p-6 sm:p-8">
     <h1 class="font-display text-2xl font-semibold mb-1">Magic link</h1>
-    
+
     <p class="text-sm text-base-content/65 mb-6">
       If the address matches an account, we will email a one-time sign-in link (valid 15 minutes).
     </p>
-    
+
     <%= if @error_message do %>
       <p class="alert alert-error text-sm mb-4" role="alert">{@error_message}</p>
     <% end %>
-    
+
     <form action={~p"/auth/magic-link"} method="post" class="space-y-4">
       <input type="hidden" name="_csrf_token" value={get_csrf_token()} />
       <div class="fieldset">
@@ -23,9 +23,9 @@
           required
         />
       </div>
-       <button type="submit" class="btn btn-primary w-full">Send link</button>
+      <button type="submit" class="btn btn-primary w-full">Send link</button>
     </form>
-    
+
     <p class="mt-6 text-sm text-center text-base-content/70">
       <a class="link link-hover link-primary" href={~p"/auth/login"}>Back to sign in</a>
     </p>

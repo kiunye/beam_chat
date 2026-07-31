@@ -65,9 +65,12 @@ defmodule BeamChatWeb.PaystackReturnController do
   end
 
   defp finalize_credit(conn, uid, amount_major, reference, data) do
-    case Wallet.complete_provider_credit(uid, amount_major, "paystack", reference, %{
-           "paystack_id" => data["id"]
-         }) do
+    extra_metadata = %{
+      "paystack_id" => data["id"],
+      "currency" => data["currency"]
+    }
+
+    case Wallet.complete_provider_credit(uid, amount_major, "paystack", reference, extra_metadata) do
       {:ok, _, _} ->
         conn
         |> put_flash(:info, "Wallet topped up successfully.")

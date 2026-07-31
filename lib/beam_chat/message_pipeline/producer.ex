@@ -8,7 +8,13 @@ defmodule BeamChat.MessagePipeline.Producer do
   the producer wraps it.
   """
 
-  @spec push_messages(Broadway.name(), [map()]) :: :ok
+  # This wrapper exists to:
+  #   1. Document the canonical entry point for pushing into the pipeline.
+  #   2. Loosen the input type from Broadway's `[%Broadway.Message{}]` spec
+  #      to `[map()]` (plain data, wrapped by `Broadway.DummyProducer` at
+  #      runtime).
+  # See P2 #26 in SECURITY_REVIEW.md for the broader context.
+  @spec push_messages(Broadway.name(), [map() | term()]) :: :ok
   def push_messages(broadway_name, messages) when is_list(messages) do
     Broadway.push_messages(broadway_name, messages)
   end

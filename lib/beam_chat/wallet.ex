@@ -121,20 +121,54 @@ defmodule BeamChat.Wallet do
         rollback_or_ok(finalize_pending_credit(wallet, pending, amount, provider, extra_metadata))
 
       nil ->
-        meta = Map.merge(%{"provider" => provider}, stringify_keys(extra_metadata))
+        # No pending row existed. This is the path that bypasses
+        # `pending_amount_ok/2`, so we add explicit guards:
+        #
+        # 1. The provider-reported currency must be `KES`. We do not store
+        #    currency per-wallet in any multi-currency way today, and accepting
+        #    "USD" would let an attacker who replays a different-currency
+        #    webhook still credit KES-denominated balances.
+        # 2. The amount must be positive — defence-in-depth against a
+        #    malformed payload.
+        #
+        # The strongest protection here is to **always** pre-create a pending
+        # row at top-up time (which the Paystack return controller already
+        # does), but webhooks can be delivered without a return URL hit (e.g.
+        # user closed the browser), so this branch must remain available.
+        #
+        # See SECURITY_REVIEW.md P1 #9.
+        case extra_currency_ok?(extra_metadata) do
+          :ok ->
+            meta = Map.merge(%{"provider" => provider}, stringify_keys(extra_metadata))
 
-        rollback_or_ok(
-          apply_credit_rows(
-            wallet,
-            amount,
-            credit_description(provider),
-            provider,
-            reference,
-            meta
-          )
-        )
+            rollback_or_ok(
+              apply_credit_rows(
+                wallet,
+                amount,
+                credit_description(provider),
+                provider,
+                reference,
+                meta
+              )
+            )
+
+          {:error, reason} ->
+            Repo.rollback(reason)
+        end
     end
   end
+
+  # Webhook payload carries the currency the user was charged in. We only
+  # credit KES-denominated wallets, so any other currency is a hard reject.
+  defp extra_currency_ok?(extra) when is_map(extra) do
+    case Map.get(extra, "currency") do
+      "KES" -> :ok
+      nil -> :ok
+      other -> {:error, {:unsupported_currency, other}}
+    end
+  end
+
+  defp extra_currency_ok?(_), do: :ok
 
   defp rollback_or_ok({:ok, w, t}), do: {:ok, w, t}
   defp rollback_or_ok({:error, e}), do: Repo.rollback(e)

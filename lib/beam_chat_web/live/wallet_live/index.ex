@@ -252,12 +252,12 @@ defmodule BeamChatWeb.WalletLive.Index do
       <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 class="font-display text-2xl font-semibold tracking-tight text-base-content">Wallet</h1>
-          
+
           <p class="text-sm text-base-content/70 mt-1">
             Top up with Paystack or M-Pesa, then subscribe to paid rooms from your balance.
           </p>
         </div>
-        
+
         <button
           type="button"
           phx-click="refresh_wallet"
@@ -267,25 +267,25 @@ defmodule BeamChatWeb.WalletLive.Index do
           Refresh
         </button>
       </div>
-      
+
       <section
         class="rounded-box border border-base-300 bg-base-200/30 p-6 shadow-sm"
         id="wallet-balance-card"
       >
         <p class="text-xs font-semibold uppercase tracking-wide text-base-content/55">Balance</p>
-        
+
         <p class="font-display text-3xl font-semibold text-base-content mt-1 tabular-nums">
           {format_money(@wallet.balance)} {@wallet.currency}
         </p>
       </section>
-      
+
       <div class="grid gap-6 lg:grid-cols-2">
         <section
           class="rounded-box border border-base-300 bg-base-100 p-5 space-y-4"
           id="paystack-topup"
         >
           <h2 class="font-display font-semibold text-lg">Paystack</h2>
-          
+
           <.form
             for={@paystack_form}
             phx-submit="paystack_topup"
@@ -296,10 +296,10 @@ defmodule BeamChatWeb.WalletLive.Index do
             <button type="submit" class="btn btn-primary w-full sm:w-auto">Pay with Paystack</button>
           </.form>
         </section>
-        
+
         <section class="rounded-box border border-base-300 bg-base-100 p-5 space-y-4" id="mpesa-topup">
           <h2 class="font-display font-semibold text-lg">M-Pesa</h2>
-          
+
           <.form for={@mpesa_form} phx-submit="mpesa_topup" id="mpesa-topup-form" class="space-y-3">
             <.input field={@mpesa_form[:amount]} type="text" label="Amount (KES)" required />
             <.input field={@mpesa_form[:phone]} type="text" label="Phone (Safaricom)" required />
@@ -307,18 +307,18 @@ defmodule BeamChatWeb.WalletLive.Index do
           </.form>
         </section>
       </div>
-      
+
       <section
         :if={@show_staff_panel}
         class="rounded-box border border-warning/40 bg-warning/5 p-5 space-y-3"
         id="staff-wallet-credit"
       >
         <h2 class="font-display font-semibold text-lg text-base-content">Staff / dev credit</h2>
-        
+
         <p class="text-sm text-base-content/75">
           Credit another user by email (moderators, admins, or dev mode).
         </p>
-        
+
         <.form for={@staff_form} phx-submit="staff_credit" id="staff-credit-form" class="space-y-3">
           <.input field={@staff_form[:email]} type="email" label="User email" required />
           <.input field={@staff_form[:amount]} type="text" label="Amount (KES)" required />
@@ -326,13 +326,13 @@ defmodule BeamChatWeb.WalletLive.Index do
           <button type="submit" class="btn btn-warning btn-sm">Apply credit</button>
         </.form>
       </section>
-      
+
       <section class="rounded-box border border-base-300 bg-base-100 p-5" id="wallet-transactions">
         <h2 class="font-display font-semibold text-lg mb-3">Recent activity</h2>
-        
+
         <div id="wallet-txns" phx-update="stream" class="space-y-2">
           <p class="hidden only:block text-sm text-base-content/60 py-4">No transactions yet.</p>
-          
+
           <div
             :for={{tid, txn} <- @streams.transactions}
             id={tid}
@@ -342,7 +342,7 @@ defmodule BeamChatWeb.WalletLive.Index do
               <span class="font-medium text-base-content">{txn.description}</span>
               <span class="block text-xs text-base-content/55">{txn.type} · {txn.status}</span>
             </div>
-            
+
             <div class="text-right tabular-nums">
               <span class={if(txn.type == "credit", do: "text-success", else: "text-base-content")}>
                 {if(txn.type == "credit", do: "+", else: "-")}{format_money(txn.amount)}

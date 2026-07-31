@@ -74,11 +74,6 @@ defmodule BeamChat.Rooms.Room do
     RoomServer.leave_room(room_id, user_id)
   end
 
-  @spec send_message(Ecto.UUID.t(), Ecto.UUID.t(), String.t()) :: :ok
-  def send_message(room_id, user_id, content) do
-    RoomServer.send_message(room_id, user_id, content)
-  end
-
   @spec set_typing(Ecto.UUID.t(), Ecto.UUID.t(), boolean()) :: :ok
   def set_typing(room_id, user_id, is_typing) do
     RoomServer.set_typing(room_id, user_id, is_typing)

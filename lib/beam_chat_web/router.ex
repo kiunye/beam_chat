@@ -10,16 +10,12 @@ defmodule BeamChatWeb.Router do
     plug :protect_from_forgery
     plug BeamChatWeb.Plugs.FetchCurrentUser
 
-    plug :put_secure_browser_headers, %{
-      "content-security-policy" =>
-        "default-src 'self'; " <>
-          "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://mcp.figma.com; " <>
-          "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " <>
-          "img-src 'self' data: https:; " <>
-          "font-src 'self' data: https://fonts.gstatic.com; " <>
-          "connect-src 'self' ws: wss: https://mcp.figma.com;"
-    }
+    plug :put_secure_browser_headers, %{"content-security-policy" => BeamChatWeb.csp_header()}
   end
+
+  # Content Security Policy header. Defined as a public function on
+  # `BeamChatWeb` so the `plug` macro can resolve it at compile time. See
+  # SECURITY_REVIEW.md P1 #6.
 
   pipeline :api do
     plug :accepts, ["json"]
