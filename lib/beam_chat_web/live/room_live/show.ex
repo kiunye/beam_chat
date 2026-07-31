@@ -112,7 +112,13 @@ defmodule BeamChatWeb.RoomLive.Show do
 
     if socket.assigns[:access] == :ok && user && room && topic do
       Room.leave_room(room.id, user.id)
-      RoomPresence.untrack(self(), topic, user.id)
+
+      # `untrack/3` is a call to the presence server; run it in a detached task
+      # so shutdown never blocks on a busy presence process (SECURITY_REVIEW.md
+      # P3 #25). The pid is captured first — the task process must not be the
+      # one tracked in the presence entry.
+      pid = self()
+      Task.start(fn -> RoomPresence.untrack(pid, topic, user.id) end)
     end
 
     :ok

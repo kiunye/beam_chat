@@ -59,6 +59,12 @@ defmodule BeamChatWeb.UserAuthLive do
     token = session["user_token"]
     user = Accounts.get_user_by_session_token(token)
     user = if user && user.is_banned, do: nil, else: user
+    if user, do: touch_last_seen_async(user.id)
     assign(socket, :current_user, user)
+  end
+
+  defp touch_last_seen_async(user_id) do
+    Task.start(fn -> Accounts.touch_last_seen(user_id) end)
+    :ok
   end
 end

@@ -36,17 +36,37 @@ defmodule BeamChat.Wallet do
   end
 
   def list_recent_transactions(user_id, limit \\ 50) when is_binary(user_id) do
+    {txns, _has_more} = list_transactions(user_id, limit, 0)
+    txns
+  end
+
+  @doc """
+  Paginated wallet transactions, newest first with a stable `id` tie-break
+  (SECURITY_REVIEW.md P3 #23).
+
+  Returns `{transactions, has_more?}` — one extra row is fetched to detect
+  whether another page exists, without an extra count query.
+  """
+  @spec list_transactions(String.t(), pos_integer(), non_neg_integer()) ::
+          {[%WalletTransaction{}], boolean()}
+  def list_transactions(user_id, limit, offset)
+      when is_binary(user_id) and is_integer(limit) and limit > 0 and is_integer(offset) and
+             offset >= 0 do
     case get_wallet_for_user(user_id) do
       nil ->
-        []
+        {[], false}
 
       %WalletSchema{id: wid} ->
         from(t in WalletTransaction,
           where: t.wallet_id == ^wid,
-          order_by: [desc: t.inserted_at],
-          limit: ^limit
+          order_by: [desc: t.inserted_at, desc: t.id],
+          limit: ^(limit + 1),
+          offset: ^offset
         )
         |> Repo.all()
+        |> then(fn batch ->
+          {Enum.take(batch, limit), length(batch) > limit}
+        end)
     end
   end
 

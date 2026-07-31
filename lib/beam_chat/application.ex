@@ -12,6 +12,10 @@ defmodule BeamChat.Application do
       BeamChat.Repo,
       {Oban, Application.fetch_env!(:beam_chat, Oban)},
       {DNSCluster, query: Application.get_env(:beam_chat, :dns_cluster_query) || :ignore},
+      # PubSub fan-out is asynchronous and has no flow control on slow
+      # subscribers (accepted limitation, SECURITY_REVIEW.md P3 #24). The
+      # phoenix_pubsub 2.2.0 adapter is built on :pg and delivers locally via
+      # per-subscriber broadcast processes, so publishers never block.
       {Phoenix.PubSub, name: BeamChat.PubSub},
       BeamChatWeb.RoomPresence,
       # Horde clustering for distributed room processes

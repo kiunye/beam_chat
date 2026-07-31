@@ -6,6 +6,7 @@ defmodule BeamChat.AccountsTest do
 
   alias BeamChat.Accounts
   alias BeamChat.Accounts.User
+  alias BeamChat.Repo
 
   describe "ban_user/2" do
     test "sets is_banned and clears all session tokens in a single transaction" do
@@ -171,6 +172,39 @@ defmodule BeamChat.AccountsTest do
 
       assert String.starts_with?(user.username, "alice_walker_")
       refute Accounts.reserved_username?(user.username)
+    end
+  end
+
+  describe "touch_last_seen/1" do
+    test "sets last_seen_at when it has never been set" do
+      user = registered_user_fixture()
+      assert user.last_seen_at == nil
+
+      assert {1, nil} = Accounts.touch_last_seen(user.id)
+      assert %{last_seen_at: %DateTime{}} = Accounts.get_user(user.id)
+    end
+
+    test "is throttled: a fresh last_seen_at is not rewritten" do
+      user = registered_user_fixture()
+      assert {1, nil} = Accounts.touch_last_seen(user.id)
+
+      assert {0, nil} = Accounts.touch_last_seen(user.id)
+      assert {0, nil} = Accounts.touch_last_seen(user.id)
+    end
+
+    test "updates again once the 5-minute window has passed" do
+      user = registered_user_fixture()
+
+      stale = DateTime.add(DateTime.utc_now(), -6 * 60, :second)
+
+      from(u in User, where: u.id == ^user.id, update: [set: [last_seen_at: ^stale]])
+      |> Repo.update_all([])
+
+      assert {1, nil} = Accounts.touch_last_seen(user.id)
+    end
+
+    test "does nothing for an unknown user" do
+      assert {0, nil} = Accounts.touch_last_seen(Ecto.UUID.generate())
     end
   end
 end

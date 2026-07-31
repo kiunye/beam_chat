@@ -140,6 +140,37 @@ if config_env() == :prod do
 
   config :beam_chat, :sso_jwt_secrets, sso_jwt_secrets
 
+  # Oban queue concurrency limits (SECURITY_REVIEW.md P3 #27). Format:
+  # "QUEUE:CONCURRENCY[,QUEUE:CONCURRENCY,...]", e.g. "default:20,payments:10".
+  # Unset/empty falls back to the config.exs defaults. Queue names must already
+  # exist as atoms (`:default`, `:payments`, ...) — no atom creation from input.
+  oban_queues_env = System.get_env("OBAN_QUEUES")
+
+  if is_binary(oban_queues_env) and oban_queues_env != "" do
+    oban_queues =
+      oban_queues_env
+      |> String.split(",")
+      |> Enum.map(fn entry ->
+        case String.split(entry, ":") do
+          [name, concurrency] ->
+            try do
+              {String.to_existing_atom(String.trim(name)),
+               String.to_integer(String.trim(concurrency))}
+            rescue
+              ArgumentError ->
+                raise "invalid OBAN_QUEUES entry #{inspect(entry)}: expected a known " <>
+                        "queue name and an integer concurrency (e.g. \"default:10\")"
+            end
+
+          _ ->
+            raise "invalid OBAN_QUEUES entry #{inspect(entry)}: expected " <>
+                    "QUEUE:CONCURRENCY (e.g. \"default:10\")"
+        end
+      end)
+
+    config :beam_chat, Oban, queues: oban_queues
+  end
+
   # LiveKit: required in production so we never accidentally use dev keys.
   livekit_url =
     System.get_env("LIVEKIT_URL") ||
