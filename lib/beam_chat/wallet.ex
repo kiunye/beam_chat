@@ -93,7 +93,16 @@ defmodule BeamChat.Wallet do
   end
 
   defp allowed_manual_credit?(%User{} = actor) do
-    User.staff?(actor) or Application.get_env(:beam_chat, :allow_dev_wallet_credit, false)
+    User.staff?(actor) or dev_wallet_credit_allowed?()
+  end
+
+  # Dev-only escape hatch: `dev.exs` sets `allow_dev_wallet_credit: true`.
+  # `:dev_wallet_credit_build` is computed from the config environment at
+  # boot (false outside dev), so a stray prod config can never enable it.
+  # See SECURITY_REVIEW.md P2 #20.
+  defp dev_wallet_credit_allowed? do
+    Application.get_env(:beam_chat, :allow_dev_wallet_credit, false) and
+      Application.get_env(:beam_chat, :dev_wallet_credit_build, false)
   end
 
   @doc """
@@ -436,5 +445,27 @@ defmodule BeamChat.Wallet do
       status: "active"
     })
     |> Repo.insert()
+  end
+
+  @doc """
+  Flips expired `group_subscriptions` rows from `"active"` to `"expired"`.
+
+  Runs on an Oban cron schedule. Access is already gated on
+  `expires_at > now()` (`room_access_flags`), so this is bookkeeping that
+  stops stale active rows from accumulating forever. See
+  SECURITY_REVIEW.md P2 #13.
+
+  Returns the number of rows flipped.
+  """
+  def expire_subscriptions do
+    now = DateTime.utc_now()
+
+    {count, _} =
+      from(s in GroupSubscription,
+        where: s.status == "active" and s.expires_at <= ^now
+      )
+      |> Repo.update_all(set: [status: "expired"])
+
+    count
   end
 end

@@ -3,6 +3,8 @@ defmodule BeamChat.WalletTest do
 
   import BeamChat.TestFixtures
 
+  alias BeamChat.Payments.GroupSubscription
+  alias BeamChat.Repo
   alias BeamChat.Wallet
   alias BeamChat.Wallet.WalletTransaction
 
@@ -146,6 +148,51 @@ defmodule BeamChat.WalletTest do
                Wallet.manual_credit(member, target.id, Decimal.new("1.00"), "nope")
 
       Application.put_env(:beam_chat, :allow_dev_wallet_credit, prev)
+    end
+  end
+
+  describe "expire_subscriptions/0" do
+    test "flips expired subscriptions to expired and returns the count" do
+      owner = user_fixture()
+      room = room_fixture(owner, %{type: "paid", is_paid: true, price: "10.00"})
+      user = user_fixture()
+
+      expired =
+        group_subscription_fixture(user, room, %{
+          status: "active",
+          expires_at: DateTime.add(DateTime.utc_now(:second), -3600, :second)
+        })
+
+      assert Wallet.expire_subscriptions() == 1
+
+      assert Repo.get(GroupSubscription, expired.id).status == "expired"
+    end
+
+    test "leaves active subscriptions untouched" do
+      owner = user_fixture()
+      room = room_fixture(owner, %{type: "paid", is_paid: true, price: "10.00"})
+      user = user_fixture()
+
+      active =
+        group_subscription_fixture(user, room, %{
+          status: "active",
+          expires_at: DateTime.add(DateTime.utc_now(:second), 3600, :second)
+        })
+
+      assert Wallet.expire_subscriptions() == 0
+      assert Repo.get(GroupSubscription, active.id).status == "active"
+    end
+
+    test "does not touch already-expired or cancelled rows" do
+      owner = user_fixture()
+      room = room_fixture(owner, %{type: "paid", is_paid: true, price: "10.00"})
+      user = user_fixture()
+      past = DateTime.add(DateTime.utc_now(:second), -3600, :second)
+
+      group_subscription_fixture(user, room, %{status: "expired", expires_at: past})
+      group_subscription_fixture(user, room, %{status: "cancelled", expires_at: past})
+
+      assert Wallet.expire_subscriptions() == 0
     end
   end
 end

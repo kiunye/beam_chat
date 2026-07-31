@@ -75,6 +75,14 @@ defmodule BeamChatWeb.Telemetry do
           "The time the connection spent waiting before being checked out for the query"
       ),
 
+      # Message pipeline metrics
+      counter("beam_chat.message_pipeline.persisted.count",
+        description: "Messages persisted and broadcast by the Broadway pipeline"
+      ),
+      counter("beam_chat.message_pipeline.failed.count",
+        description: "Messages dropped by the Broadway pipeline (see log for reasons)"
+      ),
+
       # VM Metrics
       summary("vm.memory.total", unit: {:byte, :kilobyte}),
       summary("vm.total_run_queue_lengths.total"),
