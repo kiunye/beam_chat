@@ -5,6 +5,8 @@ defmodule BeamChat.AccountsTest do
   import Ecto.Query
 
   alias BeamChat.Accounts
+  alias BeamChat.Accounts.User
+  alias BeamChat.Repo
 
   describe "ban_user/2" do
     test "sets is_banned and clears all session tokens in a single transaction" do
@@ -74,7 +76,135 @@ defmodule BeamChat.AccountsTest do
 
     test "returns error for unknown user id" do
       assert {:error, :not_found} =
-               Accounts.unban_user(%BeamChat.Accounts.User{id: Ecto.UUID.generate()})
+               Accounts.unban_user(%User{id: Ecto.UUID.generate()})
+    end
+  end
+
+  describe "reserved_username?/1" do
+    test "matches the default blocklist case-insensitively" do
+      assert Accounts.reserved_username?("admin")
+      assert Accounts.reserved_username?("ADMIN")
+      assert Accounts.reserved_username?("Admin")
+      assert Accounts.reserved_username?(" beam_chat ")
+      assert Accounts.reserved_username?("staff")
+      assert Accounts.reserved_username?("moderator")
+    end
+
+    test "returns false for ordinary usernames" do
+      refute Accounts.reserved_username?("chris")
+      refute Accounts.reserved_username?("alice_42")
+      refute Accounts.reserved_username?("normal_user")
+    end
+
+    test "returns false for non-binary input" do
+      refute Accounts.reserved_username?(nil)
+      refute Accounts.reserved_username?(123)
+      refute Accounts.reserved_username?(%{})
+    end
+
+    test "reflects runtime overrides to :reserved_usernames" do
+      original = Application.get_env(:beam_chat, :reserved_usernames, [])
+
+      try do
+        Application.put_env(:beam_chat, :reserved_usernames, ["custom_reserved_xyz"])
+
+        assert Accounts.reserved_username?("custom_reserved_xyz")
+        refute Accounts.reserved_username?("admin")
+      after
+        Application.put_env(:beam_chat, :reserved_usernames, original)
+      end
+    end
+  end
+
+  describe "registration changeset reserved-username guard" do
+    test "rejects a reserved username at the changeset level" do
+      changeset =
+        User.registration_changeset(%User{}, %{
+          username: "admin",
+          email: "x@example.com",
+          password: "password12"
+        })
+
+      refute changeset.valid?
+      assert %{username: ["is reserved and cannot be used"]} = errors_on(changeset)
+    end
+
+    test "is case-insensitive and ignores leading whitespace" do
+      changeset =
+        User.registration_changeset(%User{}, %{
+          username: "  ADMIN  ",
+          email: "x@example.com",
+          password: "password12"
+        })
+
+      refute changeset.valid?
+    end
+
+    test "accepts an ordinary username" do
+      changeset =
+        User.registration_changeset(%User{}, %{
+          username: "alice_42",
+          email: "x@example.com",
+          password: "password12"
+        })
+
+      assert changeset.valid?
+    end
+  end
+
+  describe "OAuth username generation avoids reserved names" do
+    test "an OAuth display name that would yield a reserved handle is suffixed" do
+      # `Admin Support` -> sanitised `admin_support` -> candidate `admin_support_<hex>`.
+      # Because the sanitised `admin_support` is also a reserved-root, the candidate
+      # itself collides with the blocklist and we append a numeric suffix.
+      claims = %{"sub" => "12345", "email" => "x@example.com", "name" => "Admin Support"}
+
+      assert {:ok, user} = Accounts.register_or_update_oauth_user("google", claims)
+
+      refute Accounts.reserved_username?(user.username)
+      assert String.starts_with?(user.username, "admin_support_")
+    end
+
+    test "a non-reserving display name is passed through unchanged" do
+      claims = %{"sub" => "67890", "email" => "y@example.com", "name" => "Alice Walker"}
+
+      assert {:ok, user} = Accounts.register_or_update_oauth_user("github", claims)
+
+      assert String.starts_with?(user.username, "alice_walker_")
+      refute Accounts.reserved_username?(user.username)
+    end
+  end
+
+  describe "touch_last_seen/1" do
+    test "sets last_seen_at when it has never been set" do
+      user = registered_user_fixture()
+      assert user.last_seen_at == nil
+
+      assert {1, nil} = Accounts.touch_last_seen(user.id)
+      assert %{last_seen_at: %DateTime{}} = Accounts.get_user(user.id)
+    end
+
+    test "is throttled: a fresh last_seen_at is not rewritten" do
+      user = registered_user_fixture()
+      assert {1, nil} = Accounts.touch_last_seen(user.id)
+
+      assert {0, nil} = Accounts.touch_last_seen(user.id)
+      assert {0, nil} = Accounts.touch_last_seen(user.id)
+    end
+
+    test "updates again once the 5-minute window has passed" do
+      user = registered_user_fixture()
+
+      stale = DateTime.add(DateTime.utc_now(), -6 * 60, :second)
+
+      from(u in User, where: u.id == ^user.id, update: [set: [last_seen_at: ^stale]])
+      |> Repo.update_all([])
+
+      assert {1, nil} = Accounts.touch_last_seen(user.id)
+    end
+
+    test "does nothing for an unknown user" do
+      assert {0, nil} = Accounts.touch_last_seen(Ecto.UUID.generate())
     end
   end
 end

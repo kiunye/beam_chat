@@ -1,46 +1,87 @@
 defmodule BeamChat.Rooms do
   @moduledoc """
-  Room listing, visibility, and distributed `RoomServer` lifecycle helpers.
+  Room listing, visibility, membership (via `BeamChatWeb.RoomPresence`), and
+  room PubSub broadcasts for typing indicators and new messages.
   """
 
   import Ecto.Query
 
+  alias BeamChat.Messages.Message
+  alias BeamChat.Messages.Persister
+  alias BeamChat.Messages.Validator
+  alias BeamChat.Moderation.RuleEngine
+  alias BeamChat.Pagination
   alias BeamChat.Payments.GroupSubscription
   alias BeamChat.Repo
   alias BeamChat.Rooms.Room
   alias BeamChat.Rooms.RoomCategory
   alias BeamChat.Rooms.RoomMember
-  alias BeamChat.Rooms.RoomServer
+
+  @spec set_typing(Ecto.UUID.t(), Ecto.UUID.t(), boolean()) :: :ok
+  def set_typing(room_id, user_id, is_typing) do
+    event = if is_typing, do: :user_typing, else: :user_stopped_typing
+
+    Phoenix.PubSub.broadcast(
+      BeamChat.PubSub,
+      "room:#{room_id}",
+      {event, %{room_id: room_id, data: user_id, timestamp: System.system_time(:millisecond)}}
+    )
+
+    :ok
+  end
+
+  @spec broadcast_new_message(Message.t()) :: :ok
+  def broadcast_new_message(%BeamChat.Messages.Message{} = msg) do
+    Phoenix.PubSub.broadcast(BeamChat.PubSub, "room:#{msg.room_id}", {:new_message, msg})
+    :ok
+  end
 
   @doc """
-  Starts a `RoomServer` under the Horde supervisor if one is not already running.
+  Validates, moderates, persists and broadcasts a room message synchronously.
+
+  Returns `{:ok, %Message{}}` (already broadcast on `room:<id>`) or
+  `{:error, reason}` where `reason` is `:empty_content`,
+  `{:blocked, reason}` (moderation rejection), a validator error atom, or
+  `{:persist_failed, reason}`.
   """
-  def ensure_room_server_started(room_id) when is_binary(room_id) do
-    spec = %{
-      id: {:room, room_id},
-      restart: :temporary,
-      start: {RoomServer, :start_link, [room_id]},
-      type: :worker
-    }
+  @spec send_message(Ecto.UUID.t(), Ecto.UUID.t(), String.t()) ::
+          {:ok, Message.t()} | {:error, term()}
+  def send_message(room_id, sender_id, content)
+      when is_binary(room_id) and is_binary(sender_id) do
+    trimmed = String.trim(content || "")
 
-    case Horde.DynamicSupervisor.start_child(BeamChat.RoomSupervisor, spec) do
-      {:ok, _} ->
-        :ok
+    if trimmed == "" do
+      {:error, :empty_content}
+    else
+      message = %{
+        kind: :room,
+        room_id: room_id,
+        user_id: sender_id,
+        content: trimmed,
+        inserted_at: nil
+      }
 
-      {:error, {:already_started, _pid}} ->
-        :ok
+      dispatch_after_moderation(message)
+    end
+  end
 
-      {:error, {:already_registered, _pid}} ->
-        :ok
+  defp dispatch_after_moderation(data) do
+    with {:ok, validated} <- Validator.validate(data) do
+      case RuleEngine.apply_rules(validated) do
+        {:blocked, _msg, reason} -> {:error, {:blocked, reason}}
+        {:flagged, msg, _reason} -> persist_and_broadcast(msg)
+        msg when is_map(msg) -> persist_and_broadcast(msg)
+      end
+    end
+  end
 
-      {:error, reason} ->
-        require Logger
-
-        Logger.warning(
-          "rooms.ensure_room_server_started failed room_id=#{room_id} reason=#{inspect(reason)}"
-        )
-
-        :ok
+  defp persist_and_broadcast(msg) do
+    with {:ok, %Message{} = row} <- Persister.persist_and_preload(msg) do
+      broadcast_new_message(row)
+      {:ok, row}
+    else
+      {:error, _reason} = err -> err
+      {:ok, other} -> {:error, {:persist_failed, {:unexpected_row, other}}}
     end
   end
 
@@ -57,8 +98,8 @@ defmodule BeamChat.Rooms do
   for server-side pagination.
   """
   def list_rooms_for_index(%BeamChat.Accounts.User{} = user, opts \\ %{}) do
-    limit = normalize_room_page_limit(Map.get(opts, :limit, 50))
-    page = normalize_room_page(Map.get(opts, :page, 1))
+    limit = Pagination.normalize_limit(Map.get(opts, :limit), 50)
+    page = Pagination.normalize_page(Map.get(opts, :page))
     offset = (page - 1) * limit
 
     base =
@@ -83,36 +124,8 @@ defmodule BeamChat.Rooms do
       total_count: total,
       page: page,
       limit: limit,
-      page_count: room_index_page_count(total, limit)
+      page_count: Pagination.page_count(total, limit)
     }
-  end
-
-  defp normalize_room_page_limit(n) when is_integer(n), do: n |> max(1) |> min(100)
-
-  defp normalize_room_page_limit(s) when is_binary(s) do
-    case Integer.parse(s) do
-      {n, _} -> normalize_room_page_limit(n)
-      :error -> 50
-    end
-  end
-
-  defp normalize_room_page_limit(_), do: 50
-
-  defp normalize_room_page(n) when is_integer(n), do: max(1, n)
-
-  defp normalize_room_page(s) when is_binary(s) do
-    case Integer.parse(s) do
-      {p, _} -> normalize_room_page(p)
-      :error -> 1
-    end
-  end
-
-  defp normalize_room_page(_), do: 1
-
-  defp room_index_page_count(_total, limit) when limit < 1, do: 1
-
-  defp room_index_page_count(total, limit) do
-    max(1, div(total + limit - 1, limit))
   end
 
   defp normalize_category_id(nil), do: nil

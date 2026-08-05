@@ -75,7 +75,7 @@ defmodule BeamChatWeb.Plugs.MpesaWebhookAuth do
     configured = configured_secret()
 
     cond do
-      configured in ["", nil] ->
+      configured == "" ->
         # Fail closed in prod.
         reject(conn, :missing_config)
 

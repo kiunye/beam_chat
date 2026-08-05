@@ -6,6 +6,17 @@ defmodule BeamChatWeb.ChatLive.Private do
   alias BeamChat.Direct.DirectMessage
   alias BeamChat.Repo
 
+  # Per-user limit for thread GETs (`/messages/:id`). The URL is a UUID, so
+  # the attack surface is tiny in theory — but an attacker who has learned
+  # a UUID (e.g. from a leaked log) can otherwise enumerate by hammering
+  # the endpoint and watching the flash string. 60 requests / minute gives
+  # plenty of headroom for normal use (refresh, multiple tabs, mobile
+  # reconnect) while making mass-enumeration uneconomic.
+  #
+  # See SECURITY_REVIEW.md P1 #11.
+  @thread_view_limit 60
+  @thread_view_period_ms :timer.minutes(1)
+
   @impl true
   def mount(_params, _session, socket) do
     {:ok,
@@ -29,7 +40,14 @@ defmodule BeamChatWeb.ChatLive.Private do
   def handle_params(params, _uri, socket) do
     case socket.assigns.live_action do
       :index -> {:noreply, assign_inbox(socket, params)}
-      :show -> {:noreply, assign_thread(socket, params["id"])}
+      :show -> {:noreply, handle_show(socket, params)}
+    end
+  end
+
+  defp handle_show(socket, params) do
+    case thread_view_allowed?(socket.assigns.current_user) do
+      :ok -> assign_thread(socket, params["id"])
+      {:error, _} -> reject_rate_limited(socket)
     end
   end
 
@@ -158,16 +176,15 @@ defmodule BeamChatWeb.ChatLive.Private do
     conv = socket.assigns.conversation
     user = socket.assigns.current_user
 
-    # `Direct.send_message/3` now enqueues into the Broadway pipeline, so it
-    # returns `:ok` synchronously. The persisted `DirectMessage` and its
-    # PubSub broadcast arrive asynchronously (≤5s batch_timeout) and are
-    # appended to the stream by `handle_info({:new_direct_message, ...}, ...)`.
     case Direct.send_message(conv.id, user.id, content) do
-      :ok ->
-        {:noreply, assign(socket, :message_form, to_form(%{"content" => ""}, as: :message))}
+      {:error, {:blocked, reason}} ->
+        {:noreply, put_flash(socket, :error, "Message blocked: #{reason}")}
 
       {:error, _reason} ->
         {:noreply, put_flash(socket, :error, "Could not send that message.")}
+
+      {:ok, _row} ->
+        {:noreply, assign(socket, :message_form, to_form(%{"content" => ""}, as: :message))}
     end
   end
 
@@ -182,25 +199,25 @@ defmodule BeamChatWeb.ChatLive.Private do
               <h1 class="font-display text-2xl font-semibold tracking-tight text-base-content">
                 Direct messages
               </h1>
-              
+
               <p class="text-sm text-base-content/70 mt-1">
                 Private 1:1 threads — persisted to your conversations.
               </p>
             </div>
-            
+
             <.link navigate={~p"/rooms"} class="btn btn-ghost btn-sm" id="nav-rooms-from-dm">
               Rooms
             </.link>
           </div>
-          
+
           <div class="rounded-box border border-base-300 bg-base-200/30 p-4 space-y-3">
             <h2 class="text-sm font-semibold text-base-content">Start a conversation</h2>
-            
+
             <p class="text-xs text-base-content/65">
               Paste another member’s user id (UUID from profile/admin tools). A richer people picker
               ships later.
             </p>
-            
+
             <.form
               for={@compose_form}
               id="dm-compose-form"
@@ -219,11 +236,11 @@ defmodule BeamChatWeb.ChatLive.Private do
               </button>
             </.form>
           </div>
-          
+
           <div :if={@conversation_rows == []} class="text-sm text-base-content/60 py-8 text-center">
             No conversations yet — start one above.
           </div>
-          
+
           <ul :if={@conversation_rows != []} class="space-y-2" id="conversation-list">
             <li :for={{conv, other, last} <- @conversation_rows} id={"conv-row-" <> conv.id}>
               <.link
@@ -238,12 +255,12 @@ defmodule BeamChatWeb.ChatLive.Private do
                     {Calendar.strftime(last.inserted_at, "%d %b %H:%M")}
                   </span>
                 </div>
-                
+
                 <p :if={last} class="text-sm text-base-content/70 truncate mt-1">{last.content}</p>
               </.link>
             </li>
           </ul>
-          
+
           <div
             :if={@inbox_meta.total_count > @inbox_meta.limit}
             class="flex flex-wrap items-center justify-center gap-3 pt-4 text-sm text-base-content/70"
@@ -280,7 +297,7 @@ defmodule BeamChatWeb.ChatLive.Private do
             </.link>
             <h1 class="font-display text-xl font-semibold">{@other_user && @other_user.username}</h1>
           </div>
-          
+
           <section class="rounded-box border border-base-300 bg-base-100 flex flex-col min-h-[24rem]">
             <div
               id="dm-scroll"
@@ -294,7 +311,7 @@ defmodule BeamChatWeb.ChatLive.Private do
               >
                 No messages yet.
               </div>
-              
+
               <div :for={{mid, msg} <- @streams.messages} id={mid} class="text-sm flex gap-2">
                 <span class="w-24 shrink-0 text-xs text-base-content/55 truncate">
                   {msg.sender && msg.sender.username}
@@ -302,7 +319,7 @@ defmodule BeamChatWeb.ChatLive.Private do
                 <p class="flex-1 whitespace-pre-wrap break-words">{msg.content}</p>
               </div>
             </div>
-            
+
             <.form
               for={@message_form}
               id="dm-message-form"
@@ -325,4 +342,53 @@ defmodule BeamChatWeb.ChatLive.Private do
 
   defp dm_inbox_page_params(page) when page > 1, do: %{"page" => Integer.to_string(page)}
   defp dm_inbox_page_params(_page), do: %{}
+
+  # Returns `:ok` if the user is under the per-minute thread-view limit,
+  # `{:error, :rate_limited}` otherwise. We use an ETS table keyed by user
+  # id to keep the counter out of the database — acceptable because we are
+  # bounding *attempts*, not aggregating *quota*, and a small over-count
+  # is harmless.
+  @table :beam_chat_dm_thread_rate
+
+  defp thread_view_allowed?(%User{id: uid}) do
+    ensure_table!()
+
+    now = System.monotonic_time(:millisecond)
+    key = {uid, now}
+    cutoff = now - @thread_view_period_ms
+
+    :ets.insert(@table, {key, now})
+    prune_older_than(uid, cutoff)
+
+    case count_in_window(uid, cutoff) do
+      n when n > @thread_view_limit -> {:error, :rate_limited}
+      _ -> :ok
+    end
+  end
+
+  defp thread_view_allowed?(nil), do: {:error, :no_user}
+
+  defp ensure_table! do
+    if :ets.info(@table) == :undefined do
+      :ets.new(@table, [:set, :named_table, :public, read_concurrency: true])
+    end
+
+    :ok
+  end
+
+  defp prune_older_than(uid, cutoff) do
+    match_spec = [{{{:"$1", :"$2"}, :_}, [{:==, :"$1", uid}, {:<, :"$2", cutoff}], [true]}]
+    :ets.select_delete(@table, match_spec)
+  end
+
+  defp count_in_window(uid, cutoff) do
+    match_spec = [{{{:"$1", :"$2"}, :_}, [{:==, :"$1", uid}, {:>=, :"$2", cutoff}], [true]}]
+    :ets.select_count(@table, match_spec)
+  end
+
+  defp reject_rate_limited(socket) do
+    socket
+    |> put_flash(:error, "You're loading that conversation too quickly. Try again in a moment.")
+    |> push_navigate(to: ~p"/messages")
+  end
 end

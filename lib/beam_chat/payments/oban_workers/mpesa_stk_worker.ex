@@ -9,15 +9,37 @@ defmodule BeamChat.Payments.ObanWorkers.MpesaStkWorker do
   alias BeamChat.Wallet.WalletTransaction
 
   @impl Oban.Worker
-  def perform(%Oban.Job{
-        args: %{"user_id" => _user_id, "txn_id" => txn_id, "phone" => phone}
-      }) do
+  def perform(%Oban.Job{attempt: attempt, max_attempts: max_attempts} = job) do
+    %{"user_id" => _user_id, "txn_id" => txn_id, "phone" => phone} = job.args
     txn = Repo.get!(WalletTransaction, txn_id)
 
-    if txn.status != "pending" do
-      :ok
-    else
-      run_stk_for_txn(txn, phone)
+    cond do
+      txn.status == "completed" ->
+        # Webhook beat us to it. Nothing to do.
+        :ok
+
+      txn.status == "failed" ->
+        # Already finalized by a previous attempt's mark_failed.
+        :ok
+
+      true ->
+        case run_stk_for_txn(txn, phone) do
+          :ok ->
+            # STK push accepted by Daraja. The scheduled MpesaPendingExpiry scan
+            # (SECURITY_REVIEW.md P1 #10) marks this txn "failed" if no webhook
+            # flips it to "completed" within the expiry window.
+            :ok
+
+          {:error, reason} when attempt >= max_attempts ->
+            # Last attempt — flip the txn to "failed" so it doesn't leak
+            # as "pending" forever once Oban discards the job.
+            _ = mark_failed(txn, "stk_push_exhausted: #{inspect(reason)}")
+            {:error, reason}
+
+          {:error, reason} ->
+            # Not the last attempt — let Oban retry.
+            {:error, reason}
+        end
     end
   end
 
@@ -63,16 +85,16 @@ defmodule BeamChat.Payments.ObanWorkers.MpesaStkWorker do
   @doc """
   Builds an M-Pesa `AccountReference` from a wallet transaction UUID.
 
-  Daraja 2.0 accepts up to ~40 chars; legacy Daraja accepts 20. We strip
-  hyphens and slice to 18 hex chars — well within both limits — giving
-  18×4 = 72 bits of entropy. Collision probability is negligible for our
-  scale (vs. the previous 12-char / 48-bit slice which was ~1/4096 per
-  same-microsecond pair).
+  We strip hyphens and slice the LAST 18 hex chars, because the tail of the
+  UUID carries the distinguishing entropy: for v4 UUIDs the head holds fixed
+  version/variant bits while the last 12 hex digits are fully random. 18
+  chars is within the legacy Daraja 20-char AccountReference limit and gives
+  ~56+ bits of real entropy, so collision probability is negligible.
   """
   def account_ref(txn_id) when is_binary(txn_id) do
     txn_id
     |> String.replace("-", "")
-    |> String.slice(0, 18)
+    |> String.slice(-18, 18)
   end
 
   defp mark_failed(%WalletTransaction{} = txn, reason) do

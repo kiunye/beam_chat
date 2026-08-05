@@ -14,9 +14,61 @@ config :beam_chat,
 config :beam_chat, Oban,
   repo: BeamChat.Repo,
   queues: [default: 10, payments: 5],
-  plugins: [Oban.Plugins.Pruner]
+  plugins: [
+    Oban.Plugins.Pruner,
+    {Oban.Plugins.Cron,
+     crontab: [
+       # Flip expired group_subscriptions to "expired" (SECURITY_REVIEW.md P2 #13)
+       {"0 * * * *", BeamChat.Workers.ExpireSubscriptions},
+       # Keep the ETS moderation rule cache fresh (SECURITY_REVIEW.md P2 #21)
+       {"*/5 * * * *", BeamChat.Workers.RefreshModerationCache},
+       # Bound the lifetime of pending M-Pesa top-ups (SECURITY_REVIEW.md P1 #10)
+       {"*/5 * * * *", BeamChat.Payments.ObanWorkers.MpesaPendingExpiry}
+     ]}
+  ]
 
 config :beam_chat, :allow_dev_wallet_credit, false
+
+# Boot-time gate for the dev wallet-credit escape hatch (SECURITY_REVIEW.md
+# P2 #20): computed from the config environment, so it is only ever true in
+# dev. Prod/test builds bake `false` here, which means a stray
+# `allow_dev_wallet_credit: true` left in a prod config can never enable
+# non-staff wallet credit at runtime.
+config :beam_chat, :dev_wallet_credit_build, config_env() == :dev
+
+# Usernames that may not be self-claimed via OAuth/SSO/registration. Prevents
+# phishing/impersonation of staff roles and system accounts. See SECURITY_REVIEW.md
+# P1 #12. Hosts may add to this list at runtime via Application.put_env.
+config :beam_chat, :reserved_usernames, [
+  # Generic privileged names
+  "admin",
+  "administrator",
+  "root",
+  "superuser",
+  "system",
+  "support",
+  "staff",
+  "moderator",
+  "mod",
+  "owner",
+  "official",
+  # Brand-internal
+  "beam_chat",
+  "beamchat",
+  "beam-chat",
+  "beamtalk",
+  # Common abuse handles
+  "null",
+  "undefined",
+  "none",
+  "anonymous",
+  "anon",
+  # Reserved pronouns/safety
+  "everyone",
+  "here",
+  "channel",
+  "all"
+]
 
 config :beam_chat, :paystack,
   secret_key: System.get_env("PAYSTACK_SECRET_KEY", ""),
@@ -47,6 +99,11 @@ config :beam_chat,
   ]
 
 config :beam_chat, :sso_jwt_secret, "dev_sso_jwt_secret_change_me_min_32_chars___"
+
+# Ordered list of accepted SSO HS256 secrets: current first, then previous
+# secret(s) during rotation. When empty, `BeamChat.SSO` falls back to the
+# single `:sso_jwt_secret`. See SECURITY_REVIEW.md P2 #19.
+config :beam_chat, :sso_jwt_secrets, []
 
 # LiveKit: read from env in dev; runtime.exs may override in prod.
 # In dev the values default to livekit-server's --dev mode (devkey/secret).
@@ -107,7 +164,7 @@ config :tailwind,
 # Configure Elixir's Logger
 config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",
-  metadata: [:request_id]
+  metadata: [:request_id, :id, :reason]
 
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason

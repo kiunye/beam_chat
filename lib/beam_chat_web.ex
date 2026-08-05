@@ -19,6 +19,66 @@ defmodule BeamChatWeb do
 
   def static_paths, do: ~w(assets fonts images favicon.ico robots.txt)
 
+  @doc """
+  Returns `true` when the request may include dev-only CSP allowlists
+  (e.g. `https://mcp.figma.com` for the design-capture script).
+
+  Reads `config :beam_chat, :csp_dev_extras` at runtime so a stale build
+  cannot accidentally widen the prod surface. Defaults to `false`; the
+  `:dev` Mix env sets it to `true` in `config/dev.exs`.
+
+  See SECURITY_REVIEW.md P1 #6.
+  """
+  @spec csp_dev_extras?() :: boolean()
+  def csp_dev_extras? do
+    Application.get_env(:beam_chat, :csp_dev_extras, false) == true
+  end
+
+  @doc """
+  Returns the value of the `Content-Security-Policy` header.
+
+  Production (and any non-dev env):
+
+      default-src 'self';
+      script-src  'self' 'unsafe-inline';
+      style-src   'self' 'unsafe-inline' https://fonts.googleapis.com;
+      img-src     'self' data: https:;
+      font-src    'self' data: https://fonts.gstatic.com;
+      connect-src 'self' ws: wss:;
+
+  Notes:
+  - We **do not** allow `'unsafe-eval'`. Phoenix 1.8 / LiveView 1.1 do not
+    require it and permitting it would defeat the entire point of script-src
+    CSP.
+  - `'unsafe-inline'` for script-src comes from the inline theme-switching
+    `<script>` in `layouts/root.html.heex` (the standard Phoenix 1.8
+    generated snippet). Removing it requires converting that snippet to a
+    colocated LiveView JS hook — tracked as P2 hardening (#29).
+  - `https://mcp.figma.com` is the design-capture script loaded via
+    `assigns[:include_figma_capture]` in the root layout. It is dev-only;
+    leaking it into prod would widen the XSS surface to anyone who can
+    compromise figma.com's CDN.
+
+  See SECURITY_REVIEW.md P1 #6.
+  """
+  @spec csp_header() :: String.t()
+  def csp_header do
+    script_src =
+      "'self' 'unsafe-inline'" <>
+        if csp_dev_extras?(), do: " https://mcp.figma.com", else: ""
+
+    connect_src =
+      "'self' ws: wss:" <>
+        if csp_dev_extras?(), do: " https://mcp.figma.com", else: ""
+
+    "default-src 'self'; " <>
+      "script-src #{script_src}; " <>
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " <>
+      "img-src 'self' data: https:; " <>
+      "font-src 'self' data: https://fonts.gstatic.com; " <>
+      "connect-src #{connect_src};"
+  end
+
   def router do
     quote do
       use Phoenix.Router, helpers: false

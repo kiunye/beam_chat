@@ -7,17 +7,26 @@ defmodule BeamChatWeb.WalletLive.Index do
   alias BeamChat.Payments.PaystackClient
   alias BeamChat.Wallet
 
+  # SECURITY_REVIEW.md P2 #20: same gate as Wallet.allowed_manual_credit?/1 —
+  # `:dev_wallet_credit_build` is false outside dev, so a stray prod config
+  # override can never surface the staff credit form.
+
+  # Page size for the recent-activity list (SECURITY_REVIEW.md P3 #23).
+  @txn_page_size 20
+
   @impl true
   def mount(_params, _session, socket) do
     user = socket.assigns.current_user
 
     {:ok, wallet} = Wallet.ensure_wallet(user.id)
-    txns = Wallet.list_recent_transactions(user.id, 40)
+    {txns, has_more} = Wallet.list_transactions(user.id, @txn_page_size, 0)
 
     {:ok,
      socket
      |> assign(:page_title, "Wallet")
      |> assign(:wallet, wallet)
+     |> assign(:txn_page, 1)
+     |> assign(:txn_has_more, has_more)
      |> assign(:paystack_form, to_form(%{"amount" => ""}, as: :paystack))
      |> assign(:mpesa_form, to_form(%{"amount" => "", "phone" => ""}, as: :mpesa))
      |> assign(:staff_form, to_form(%{"email" => "", "amount" => "", "note" => ""}, as: :staff))
@@ -26,7 +35,12 @@ defmodule BeamChatWeb.WalletLive.Index do
   end
 
   defp show_staff_panel?(%User{} = u) do
-    User.staff?(u) or Application.get_env(:beam_chat, :allow_dev_wallet_credit, false)
+    User.staff?(u) or dev_wallet_credit_allowed?()
+  end
+
+  defp dev_wallet_credit_allowed? do
+    Application.get_env(:beam_chat, :allow_dev_wallet_credit, false) and
+      Application.get_env(:beam_chat, :dev_wallet_credit_build, false)
   end
 
   @impl true
@@ -44,6 +58,20 @@ defmodule BeamChatWeb.WalletLive.Index do
 
   def handle_event("refresh_wallet", _, socket) do
     {:noreply, refresh_wallet_view(socket)}
+  end
+
+  def handle_event("load_more", _, socket) do
+    user = socket.assigns.current_user
+    page = socket.assigns.txn_page
+
+    {txns, has_more} =
+      Wallet.list_transactions(user.id, @txn_page_size, page * @txn_page_size)
+
+    {:noreply,
+     socket
+     |> assign(:txn_page, page + 1)
+     |> assign(:txn_has_more, has_more)
+     |> stream(:transactions, txns)}
   end
 
   defp paystack_topup(socket, raw) do
@@ -198,11 +226,13 @@ defmodule BeamChatWeb.WalletLive.Index do
     case Wallet.manual_credit(actor, target.id, amount, note) do
       {:ok, _, _} ->
         {:ok, my_wallet} = Wallet.ensure_wallet(actor.id)
-        txns = Wallet.list_recent_transactions(actor.id, 40)
+        {txns, has_more} = Wallet.list_transactions(actor.id, @txn_page_size, 0)
 
         socket
         |> put_flash(:info, "Credit applied to #{target.username}.")
         |> assign(:wallet, my_wallet)
+        |> assign(:txn_page, 1)
+        |> assign(:txn_has_more, has_more)
         |> assign(
           :staff_form,
           to_form(%{"email" => "", "amount" => "", "note" => ""}, as: :staff)
@@ -224,10 +254,12 @@ defmodule BeamChatWeb.WalletLive.Index do
   defp refresh_wallet_view(socket) do
     user = socket.assigns.current_user
     {:ok, wallet} = Wallet.ensure_wallet(user.id)
-    txns = Wallet.list_recent_transactions(user.id, 40)
+    {txns, has_more} = Wallet.list_transactions(user.id, @txn_page_size, 0)
 
     socket
     |> assign(:wallet, wallet)
+    |> assign(:txn_page, 1)
+    |> assign(:txn_has_more, has_more)
     |> stream(:transactions, txns, reset: true, dom_id: &("txn-" <> &1.id))
   end
 
@@ -252,12 +284,12 @@ defmodule BeamChatWeb.WalletLive.Index do
       <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 class="font-display text-2xl font-semibold tracking-tight text-base-content">Wallet</h1>
-          
+
           <p class="text-sm text-base-content/70 mt-1">
             Top up with Paystack or M-Pesa, then subscribe to paid rooms from your balance.
           </p>
         </div>
-        
+
         <button
           type="button"
           phx-click="refresh_wallet"
@@ -267,25 +299,25 @@ defmodule BeamChatWeb.WalletLive.Index do
           Refresh
         </button>
       </div>
-      
+
       <section
         class="rounded-box border border-base-300 bg-base-200/30 p-6 shadow-sm"
         id="wallet-balance-card"
       >
         <p class="text-xs font-semibold uppercase tracking-wide text-base-content/55">Balance</p>
-        
+
         <p class="font-display text-3xl font-semibold text-base-content mt-1 tabular-nums">
           {format_money(@wallet.balance)} {@wallet.currency}
         </p>
       </section>
-      
+
       <div class="grid gap-6 lg:grid-cols-2">
         <section
           class="rounded-box border border-base-300 bg-base-100 p-5 space-y-4"
           id="paystack-topup"
         >
           <h2 class="font-display font-semibold text-lg">Paystack</h2>
-          
+
           <.form
             for={@paystack_form}
             phx-submit="paystack_topup"
@@ -296,10 +328,10 @@ defmodule BeamChatWeb.WalletLive.Index do
             <button type="submit" class="btn btn-primary w-full sm:w-auto">Pay with Paystack</button>
           </.form>
         </section>
-        
+
         <section class="rounded-box border border-base-300 bg-base-100 p-5 space-y-4" id="mpesa-topup">
           <h2 class="font-display font-semibold text-lg">M-Pesa</h2>
-          
+
           <.form for={@mpesa_form} phx-submit="mpesa_topup" id="mpesa-topup-form" class="space-y-3">
             <.input field={@mpesa_form[:amount]} type="text" label="Amount (KES)" required />
             <.input field={@mpesa_form[:phone]} type="text" label="Phone (Safaricom)" required />
@@ -307,18 +339,18 @@ defmodule BeamChatWeb.WalletLive.Index do
           </.form>
         </section>
       </div>
-      
+
       <section
         :if={@show_staff_panel}
         class="rounded-box border border-warning/40 bg-warning/5 p-5 space-y-3"
         id="staff-wallet-credit"
       >
         <h2 class="font-display font-semibold text-lg text-base-content">Staff / dev credit</h2>
-        
+
         <p class="text-sm text-base-content/75">
           Credit another user by email (moderators, admins, or dev mode).
         </p>
-        
+
         <.form for={@staff_form} phx-submit="staff_credit" id="staff-credit-form" class="space-y-3">
           <.input field={@staff_form[:email]} type="email" label="User email" required />
           <.input field={@staff_form[:amount]} type="text" label="Amount (KES)" required />
@@ -326,13 +358,13 @@ defmodule BeamChatWeb.WalletLive.Index do
           <button type="submit" class="btn btn-warning btn-sm">Apply credit</button>
         </.form>
       </section>
-      
+
       <section class="rounded-box border border-base-300 bg-base-100 p-5" id="wallet-transactions">
         <h2 class="font-display font-semibold text-lg mb-3">Recent activity</h2>
-        
+
         <div id="wallet-txns" phx-update="stream" class="space-y-2">
           <p class="hidden only:block text-sm text-base-content/60 py-4">No transactions yet.</p>
-          
+
           <div
             :for={{tid, txn} <- @streams.transactions}
             id={tid}
@@ -342,7 +374,7 @@ defmodule BeamChatWeb.WalletLive.Index do
               <span class="font-medium text-base-content">{txn.description}</span>
               <span class="block text-xs text-base-content/55">{txn.type} · {txn.status}</span>
             </div>
-            
+
             <div class="text-right tabular-nums">
               <span class={if(txn.type == "credit", do: "text-success", else: "text-base-content")}>
                 {if(txn.type == "credit", do: "+", else: "-")}{format_money(txn.amount)}
@@ -353,6 +385,17 @@ defmodule BeamChatWeb.WalletLive.Index do
             </div>
           </div>
         </div>
+
+        <%= if @txn_has_more do %>
+          <button
+            id="load-more-txns"
+            type="button"
+            phx-click="load_more"
+            class="mt-4 w-full rounded-btn border border-base-300 bg-base-200 px-4 py-2 text-sm font-medium text-base-content transition hover:border-base-content/40 hover:bg-base-300"
+          >
+            Load more
+          </button>
+        <% end %>
       </section>
     </div>
     """

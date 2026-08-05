@@ -36,17 +36,37 @@ defmodule BeamChat.Wallet do
   end
 
   def list_recent_transactions(user_id, limit \\ 50) when is_binary(user_id) do
+    {txns, _has_more} = list_transactions(user_id, limit, 0)
+    txns
+  end
+
+  @doc """
+  Paginated wallet transactions, newest first with a stable `id` tie-break
+  (SECURITY_REVIEW.md P3 #23).
+
+  Returns `{transactions, has_more?}` — one extra row is fetched to detect
+  whether another page exists, without an extra count query.
+  """
+  @spec list_transactions(String.t(), pos_integer(), non_neg_integer()) ::
+          {[%WalletTransaction{}], boolean()}
+  def list_transactions(user_id, limit, offset)
+      when is_binary(user_id) and is_integer(limit) and limit > 0 and is_integer(offset) and
+             offset >= 0 do
     case get_wallet_for_user(user_id) do
       nil ->
-        []
+        {[], false}
 
       %WalletSchema{id: wid} ->
         from(t in WalletTransaction,
           where: t.wallet_id == ^wid,
-          order_by: [desc: t.inserted_at],
-          limit: ^limit
+          order_by: [desc: t.inserted_at, desc: t.id],
+          limit: ^(limit + 1),
+          offset: ^offset
         )
         |> Repo.all()
+        |> then(fn batch ->
+          {Enum.take(batch, limit), length(batch) > limit}
+        end)
     end
   end
 
@@ -93,7 +113,16 @@ defmodule BeamChat.Wallet do
   end
 
   defp allowed_manual_credit?(%User{} = actor) do
-    User.staff?(actor) or Application.get_env(:beam_chat, :allow_dev_wallet_credit, false)
+    User.staff?(actor) or dev_wallet_credit_allowed?()
+  end
+
+  # Dev-only escape hatch: `dev.exs` sets `allow_dev_wallet_credit: true`.
+  # `:dev_wallet_credit_build` is computed from the config environment at
+  # boot (false outside dev), so a stray prod config can never enable it.
+  # See SECURITY_REVIEW.md P2 #20.
+  defp dev_wallet_credit_allowed? do
+    Application.get_env(:beam_chat, :allow_dev_wallet_credit, false) and
+      Application.get_env(:beam_chat, :dev_wallet_credit_build, false)
   end
 
   @doc """
@@ -120,21 +149,65 @@ defmodule BeamChat.Wallet do
       %WalletTransaction{status: "pending"} = pending ->
         rollback_or_ok(finalize_pending_credit(wallet, pending, amount, provider, extra_metadata))
 
-      nil ->
-        meta = Map.merge(%{"provider" => provider}, stringify_keys(extra_metadata))
+      # A row the M-Pesa expiry cron flipped to "failed" locally before the
+      # real callback arrived. The webhook's `complete_provider_credit/5` call
+      # routes here; `finalize_pending_credit/5` still enforces
+      # `pending_amount_ok/2` (amount must EXACTLY equal the row's amount) and
+      # flips the row to "completed", so any later webhook retry hits the
+      # "completed" clause and never double-credits.
+      %WalletTransaction{status: "failed", metadata: %{"error" => "pending_expired_no_callback"}} =
+          expired ->
+        rollback_or_ok(finalize_pending_credit(wallet, expired, amount, provider, extra_metadata))
 
-        rollback_or_ok(
-          apply_credit_rows(
-            wallet,
-            amount,
-            credit_description(provider),
-            provider,
-            reference,
-            meta
-          )
-        )
+      nil ->
+        # No pending row existed. This is the path that bypasses
+        # `pending_amount_ok/2`, so we add explicit guards:
+        #
+        # 1. The provider-reported currency must be `KES`. We do not store
+        #    currency per-wallet in any multi-currency way today, and accepting
+        #    "USD" would let an attacker who replays a different-currency
+        #    webhook still credit KES-denominated balances.
+        # 2. The amount must be positive — defence-in-depth against a
+        #    malformed payload.
+        #
+        # The strongest protection here is to **always** pre-create a pending
+        # row at top-up time (which the Paystack return controller already
+        # does), but webhooks can be delivered without a return URL hit (e.g.
+        # user closed the browser), so this branch must remain available.
+        #
+        # See SECURITY_REVIEW.md P1 #9.
+        case extra_currency_ok?(extra_metadata) do
+          :ok ->
+            meta = Map.merge(%{"provider" => provider}, stringify_keys(extra_metadata))
+
+            rollback_or_ok(
+              apply_credit_rows(
+                wallet,
+                amount,
+                credit_description(provider),
+                provider,
+                reference,
+                meta
+              )
+            )
+
+          {:error, reason} ->
+            Repo.rollback(reason)
+        end
     end
   end
+
+  # Webhook payload carries the currency the user was charged in. We only
+  # credit KES-denominated wallets, so any other currency is a hard reject.
+  defp extra_currency_ok?(extra) when is_map(extra) do
+    case Map.get(extra, "currency") do
+      "KES" -> :ok
+      nil -> :ok
+      other -> {:error, {:unsupported_currency, other}}
+    end
+  end
+
+  defp extra_currency_ok?(_), do: :ok
 
   defp rollback_or_ok({:ok, w, t}), do: {:ok, w, t}
   defp rollback_or_ok({:error, e}), do: Repo.rollback(e)
@@ -402,5 +475,27 @@ defmodule BeamChat.Wallet do
       status: "active"
     })
     |> Repo.insert()
+  end
+
+  @doc """
+  Flips expired `group_subscriptions` rows from `"active"` to `"expired"`.
+
+  Runs on an Oban cron schedule. Access is already gated on
+  `expires_at > now()` (`room_access_flags`), so this is bookkeeping that
+  stops stale active rows from accumulating forever. See
+  SECURITY_REVIEW.md P2 #13.
+
+  Returns the number of rows flipped.
+  """
+  def expire_subscriptions do
+    now = DateTime.utc_now()
+
+    {count, _} =
+      from(s in GroupSubscription,
+        where: s.status == "active" and s.expires_at <= ^now
+      )
+      |> Repo.update_all(set: [status: "expired"])
+
+    count
   end
 end

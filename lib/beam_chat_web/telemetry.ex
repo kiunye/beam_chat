@@ -75,6 +75,18 @@ defmodule BeamChatWeb.Telemetry do
           "The time the connection spent waiting before being checked out for the query"
       ),
 
+      # Message metrics
+      counter("beam_chat.message_pipeline.persisted.count",
+        description: "Messages persisted and broadcast"
+      ),
+      counter("beam_chat.message_pipeline.failed.count",
+        description: "Messages rejected or dropped (see log for reasons)"
+      ),
+      counter("beam_chat.moderation_rules.empty.count",
+        description:
+          "Moderation rules cache fell back to empty on a DB error (fail-open: messages pass unmoderated)"
+      ),
+
       # VM Metrics
       summary("vm.memory.total", unit: {:byte, :kilobyte}),
       summary("vm.total_run_queue_lengths.total"),

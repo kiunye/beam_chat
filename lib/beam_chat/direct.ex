@@ -1,6 +1,30 @@
 defmodule BeamChat.Direct do
   @moduledoc """
   Direct conversations and messages (1:1).
+
+  ## Security — UUID-entropy assumption (SECURITY_REVIEW.md P1 #11)
+
+  The DM topic key is the conversation UUID (`conversation:<uuid>`).
+  Anyone who knows the UUID of a conversation they are not a participant
+  of can subscribe to that PubSub topic and receive the message stream.
+
+  `ChatLive.Private.assign_thread/2` enforces `Direct.participant?/2` at
+  mount time, so the application surface is safe — but the underlying
+  PubSub topic is not access-controlled.
+
+  We rely on the **unguessability of conversation UUIDs** (UUIDv4 —
+  122 bits of entropy) as the security boundary for this. Operators and
+  contributors must:
+
+    - Not weaken the UUID shape (do not switch to sequential or otherwise
+      enumerable identifiers).
+    - Not log conversation UUIDs at INFO level or higher.
+    - Not include conversation UUIDs in URLs that are sent off-platform
+      (e.g. email notifications) without an additional auth check.
+
+  Defence in depth: per-user rate limiting on `/messages/:id` is enforced
+  by `BeamChatWeb.ChatLive.Private.handle_show/2` to bound enumeration
+  attempts.
   """
 
   import Ecto.Query
@@ -8,7 +32,10 @@ defmodule BeamChat.Direct do
   alias BeamChat.Accounts.User
   alias BeamChat.Direct.Conversation
   alias BeamChat.Direct.DirectMessage
-  alias BeamChat.MessagePipeline.Producer
+  alias BeamChat.Messages.Persister
+  alias BeamChat.Messages.Validator
+  alias BeamChat.Moderation.RuleEngine
+  alias BeamChat.Pagination
   alias BeamChat.Repo
 
   @topic_prefix "conversation:"
@@ -23,6 +50,7 @@ defmodule BeamChat.Direct do
     Phoenix.PubSub.unsubscribe(BeamChat.PubSub, topic(conversation_id))
   end
 
+  @spec broadcast_new_message(DirectMessage.t()) :: :ok
   def broadcast_new_message(%DirectMessage{} = msg) do
     Phoenix.PubSub.broadcast(
       BeamChat.PubSub,
@@ -41,8 +69,8 @@ defmodule BeamChat.Direct do
   server-side pagination (same shape as `BeamChat.Rooms.list_rooms_for_index/2`).
   """
   def list_conversations_for(%User{id: user_id}, opts \\ %{}) do
-    limit = normalize_dm_page_limit(Map.get(opts, :limit) || 30)
-    page = normalize_dm_page(Map.get(opts, :page) || 1)
+    limit = Pagination.normalize_limit(Map.get(opts, :limit), 30)
+    page = Pagination.normalize_page(Map.get(opts, :page))
     offset = (page - 1) * limit
 
     base =
@@ -71,36 +99,8 @@ defmodule BeamChat.Direct do
       total_count: total,
       page: page,
       limit: limit,
-      page_count: dm_inbox_page_count(total, limit)
+      page_count: Pagination.page_count(total, limit)
     }
-  end
-
-  defp normalize_dm_page_limit(n) when is_integer(n), do: n |> max(1) |> min(100)
-
-  defp normalize_dm_page_limit(s) when is_binary(s) do
-    case Integer.parse(s) do
-      {n, _} -> normalize_dm_page_limit(n)
-      :error -> 30
-    end
-  end
-
-  defp normalize_dm_page_limit(_), do: 30
-
-  defp normalize_dm_page(n) when is_integer(n), do: max(1, n)
-
-  defp normalize_dm_page(s) when is_binary(s) do
-    case Integer.parse(s) do
-      {p, _} -> normalize_dm_page(p)
-      :error -> 1
-    end
-  end
-
-  defp normalize_dm_page(_), do: 1
-
-  defp dm_inbox_page_count(_total, limit) when limit < 1, do: 1
-
-  defp dm_inbox_page_count(total, limit) do
-    max(1, div(total + limit - 1, limit))
   end
 
   defp conversation_inbox_rows(convs, user_id) do
@@ -184,28 +184,52 @@ defmodule BeamChat.Direct do
     |> Repo.all()
   end
 
-  def send_message(conversation_id, sender_id, content) when is_binary(conversation_id) and is_binary(sender_id) do
+  @doc """
+  Validates, moderates, persists and broadcasts a direct message synchronously.
+
+  Returns `{:ok, %DirectMessage{}}` (already broadcast on
+  `Direct.topic(conversation_id)`) or `{:error, reason}` where `reason` is
+  `:empty_content`, `{:blocked, reason}` (moderation rejection), a validator
+  error atom, or `{:persist_failed, reason}`.
+  """
+  @spec send_message(Ecto.UUID.t(), Ecto.UUID.t(), String.t()) ::
+          {:ok, DirectMessage.t()} | {:error, term()}
+  def send_message(conversation_id, sender_id, content)
+      when is_binary(conversation_id) and is_binary(sender_id) do
     trimmed = String.trim(content || "")
 
     if trimmed == "" do
       {:error, :empty_content}
     else
-      Producer.push_messages(BeamChat.MessagePipeline, [
-        %{
-          kind: :direct,
-          conversation_id: conversation_id,
-          user_id: sender_id,
-          content: trimmed,
-          inserted_at: nil
-        }
-      ])
+      message = %{
+        kind: :direct,
+        conversation_id: conversation_id,
+        user_id: sender_id,
+        content: trimmed,
+        inserted_at: nil
+      }
 
-      # Persistence happens asynchronously in the Broadway pipeline. The
-      # `{:new_direct_message, ...}` PubSub event fans out to subscribed
-      # LiveViews as soon as the batch is persisted, so the caller (the
-      # DM LiveView) does not need a synchronous handle on the persisted row
-      # — same pattern as `Rooms.RoomLive.Show.handle_event("send", ...)`.
-      :ok
+      dispatch_after_moderation(message)
+    end
+  end
+
+  defp dispatch_after_moderation(data) do
+    with {:ok, validated} <- Validator.validate(data) do
+      case RuleEngine.apply_rules(validated) do
+        {:blocked, _msg, reason} -> {:error, {:blocked, reason}}
+        {:flagged, msg, _reason} -> persist_and_broadcast(msg)
+        msg when is_map(msg) -> persist_and_broadcast(msg)
+      end
+    end
+  end
+
+  defp persist_and_broadcast(msg) do
+    with {:ok, %DirectMessage{} = row} <- Persister.persist_and_preload(msg) do
+      broadcast_new_message(row)
+      {:ok, row}
+    else
+      {:error, _reason} = err -> err
+      {:ok, other} -> {:error, {:persist_failed, {:unexpected_row, other}}}
     end
   end
 end

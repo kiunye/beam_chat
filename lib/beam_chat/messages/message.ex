@@ -18,6 +18,8 @@ defmodule BeamChat.Messages.Message do
     belongs_to :sender, BeamChat.Accounts.User, foreign_key: :sender_id
   end
 
+  @type t :: %__MODULE__{}
+
   @content_types ~w(text image audio video file system)
 
   def changeset(message, attrs) do

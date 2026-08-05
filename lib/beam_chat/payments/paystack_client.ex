@@ -5,7 +5,7 @@ defmodule BeamChat.Payments.PaystackClient do
   def initialize_transaction(email, amount_major, reference, callback_url, metadata \\ %{}) do
     secret = secret_key()
 
-    if secret == "" or secret == nil do
+    if secret == "" do
       {:error, :missing_config}
     else
       subunits = to_subunits(amount_major)
@@ -38,7 +38,7 @@ defmodule BeamChat.Payments.PaystackClient do
   def verify_transaction(reference) do
     secret = secret_key()
 
-    if secret == "" or secret == nil do
+    if secret == "" do
       {:error, :missing_config}
     else
       case Req.get(base_url() <> "/transaction/verify/" <> URI.encode(reference),

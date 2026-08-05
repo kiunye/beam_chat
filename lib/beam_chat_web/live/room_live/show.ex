@@ -1,11 +1,11 @@
 defmodule BeamChatWeb.RoomLive.Show do
   use BeamChatWeb, :live_view
 
-  alias BeamChat.MessagePipeline.Producer
+  alias BeamChat.Accounts.User
   alias BeamChat.Messages.Message
+  alias BeamChat.Repo
   alias BeamChat.Rooms
   alias BeamChat.Rooms.AccessPolicy
-  alias BeamChat.Rooms.Room
   alias BeamChat.Video.TokenService
   alias BeamChat.Wallet
   alias BeamChatWeb.RoomPresence
@@ -42,6 +42,7 @@ defmodule BeamChatWeb.RoomLive.Show do
           |> assign(:topic, topic)
           |> assign(:typing_user_ids, MapSet.new())
           |> assign(:typing_clear_timer_ref, nil)
+          |> assign(:typing_broadcast_at, nil)
           |> assign(:presence_list, %{})
           |> assign(:presence_list_sorted, [])
           |> assign(:message_form, message_form)
@@ -51,8 +52,6 @@ defmodule BeamChatWeb.RoomLive.Show do
 
         socket =
           if connected?(socket) do
-            Rooms.ensure_room_server_started(room.id)
-            Room.join_room(room.id, user.id, user.username)
             Phoenix.PubSub.subscribe(BeamChat.PubSub, topic)
 
             {:ok, _} =
@@ -85,6 +84,7 @@ defmodule BeamChatWeb.RoomLive.Show do
     |> assign(:topic, nil)
     |> assign(:typing_user_ids, MapSet.new())
     |> assign(:typing_clear_timer_ref, nil)
+    |> assign(:typing_broadcast_at, nil)
     |> assign(:presence_list, %{})
     |> assign(:presence_list_sorted, [])
     |> assign(:message_form, nil)
@@ -109,8 +109,12 @@ defmodule BeamChatWeb.RoomLive.Show do
     topic = socket.assigns[:topic]
 
     if socket.assigns[:access] == :ok && user && room && topic do
-      Room.leave_room(room.id, user.id)
-      RoomPresence.untrack(self(), topic, user.id)
+      # `untrack/3` is a call to the presence server; run it in a detached task
+      # so shutdown never blocks on a busy presence process (SECURITY_REVIEW.md
+      # P3 #25). The pid is captured first — the task process must not be the
+      # one tracked in the presence entry.
+      pid = self()
+      Task.start(fn -> RoomPresence.untrack(pid, topic, user.id) end)
     end
 
     :ok
@@ -135,8 +139,12 @@ defmodule BeamChatWeb.RoomLive.Show do
   end
 
   def handle_info({:clear_my_typing, user_id}, socket) do
-    Room.set_typing(socket.assigns.room.id, user_id, false)
-    {:noreply, assign(socket, :typing_clear_timer_ref, nil)}
+    Rooms.set_typing(socket.assigns.room.id, user_id, false)
+
+    {:noreply,
+     socket
+     |> assign(:typing_clear_timer_ref, nil)
+     |> assign(:typing_broadcast_at, nil)}
   end
 
   def handle_info(%Phoenix.Socket.Broadcast{event: "presence_diff", topic: topic}, socket) do
@@ -158,69 +166,78 @@ defmodule BeamChatWeb.RoomLive.Show do
   def handle_event("send", %{"message" => %{"content" => content}}, socket) do
     socket = cancel_typing_clear_timer(socket)
 
-    Producer.push_messages(BeamChat.MessagePipeline, [
-      %{
-        room_id: socket.assigns.room.id,
-        user_id: socket.assigns.current_user.id,
-        content: content,
-        inserted_at: nil
-      }
-    ])
+    case fresh_active_user(socket) do
+      {:ok, user} ->
+        case Rooms.send_message(socket.assigns.room.id, user.id, content) do
+          {:ok, _row} ->
+            Rooms.set_typing(socket.assigns.room.id, user.id, false)
 
-    Room.set_typing(socket.assigns.room.id, socket.assigns.current_user.id, false)
+            {:noreply,
+             socket
+             |> assign(:message_form, to_form(%{"content" => ""}, as: :message))
+             |> assign(:typing_clear_timer_ref, nil)}
 
-    {:noreply,
-     socket
-     |> assign(:message_form, to_form(%{"content" => ""}, as: :message))
-     |> assign(:typing_clear_timer_ref, nil)}
+          {:error, {:blocked, reason}} ->
+            {:noreply, put_flash(socket, :error, "Message blocked: #{reason}")}
+
+          {:error, _reason} ->
+            {:noreply, put_flash(socket, :error, "Could not send that message.")}
+        end
+
+      {:error, reason} ->
+        {:noreply, reject_banned(socket, reason)}
+    end
   end
 
   def handle_event("subscribe_paid_room", _, socket) do
     room = socket.assigns.room
-    user = socket.assigns.current_user
 
-    case Wallet.subscribe_paid_room(user, room) do
-      {:ok, _, _, _} ->
-        {:noreply,
-         socket
-         |> put_flash(:info, "You are subscribed. Welcome in!")
-         |> push_navigate(to: ~p"/rooms/#{room.slug}")}
+    case fresh_active_user(socket) do
+      {:ok, user} ->
+        case Wallet.subscribe_paid_room(user, room) do
+          {:ok, _, _, _} ->
+            {:noreply,
+             socket
+             |> put_flash(:info, "You are subscribed. Welcome in!")
+             |> push_navigate(to: ~p"/rooms/#{room.slug}")}
 
-      {:error, :insufficient_funds} ->
-        {:noreply,
-         socket
-         |> put_flash(:error, "Not enough wallet balance. Top up from your wallet page.")
-         |> push_navigate(to: ~p"/wallet")}
+          {:error, :insufficient_funds} ->
+            {:noreply,
+             socket
+             |> put_flash(:error, "Not enough wallet balance. Top up from your wallet page.")
+             |> push_navigate(to: ~p"/wallet")}
 
-      {:error, :already_subscribed} ->
-        {:noreply,
-         socket
-         |> put_flash(:info, "You already have an active subscription.")
-         |> push_navigate(to: ~p"/rooms/#{room.slug}")}
+          {:error, :already_subscribed} ->
+            {:noreply,
+             socket
+             |> put_flash(:info, "You already have an active subscription.")
+             |> push_navigate(to: ~p"/rooms/#{room.slug}")}
 
-      {:error, _} ->
-        {:noreply,
-         socket
-         |> put_flash(:error, "Could not complete subscription.")
-         |> push_navigate(to: ~p"/rooms")}
+          {:error, _} ->
+            {:noreply,
+             socket
+             |> put_flash(:error, "Could not complete subscription.")
+             |> push_navigate(to: ~p"/rooms")}
+        end
+
+      {:error, reason} ->
+        {:noreply, reject_banned(socket, reason)}
     end
   end
 
   def handle_event("typing", %{"message" => %{"content" => content}}, socket) do
-    room_id = socket.assigns.room.id
-    user_id = socket.assigns.current_user.id
     socket = cancel_typing_clear_timer(socket)
 
-    timer_ref =
-      if String.trim(content) != "" do
-        Room.set_typing(room_id, user_id, true)
-        Process.send_after(self(), {:clear_my_typing, user_id}, 2200)
-      else
-        Room.set_typing(room_id, user_id, false)
-        nil
-      end
+    case fresh_active_user(socket) do
+      {:ok, user} ->
+        room_id = socket.assigns.room.id
+        handle_typing_content(socket, user, room_id, content)
 
-    {:noreply, assign(socket, :typing_clear_timer_ref, timer_ref)}
+      {:error, _reason} ->
+        # Silently no-op typing for banned/missing users. They can't see the
+        # chat, so any in-flight typing event is irrelevant.
+        {:noreply, socket}
+    end
   end
 
   # Video events sent from the client-side LiveKitRoom hook are forwarded
@@ -248,6 +265,45 @@ defmodule BeamChatWeb.RoomLive.Show do
     {:noreply, socket}
   end
 
+  # Applies the typing event for a known user: broadcasts the typing
+  # indicator (throttled to at most once every 2200 ms — see
+  # `typing_broadcast_decision/2`) and schedules the clear timer, or clears
+  # typing when the content is blank.
+  defp handle_typing_content(socket, user, room_id, content) do
+    if String.trim(content) != "" do
+      now = System.monotonic_time(:millisecond)
+
+      {should_broadcast, broadcast_at} =
+        typing_broadcast_decision(now, socket.assigns[:typing_broadcast_at])
+
+      if should_broadcast, do: Rooms.set_typing(room_id, user.id, true)
+
+      timer_ref = Process.send_after(self(), {:clear_my_typing, user.id}, 2200)
+
+      {:noreply,
+       socket
+       |> assign(:typing_broadcast_at, broadcast_at)
+       |> assign(:typing_clear_timer_ref, timer_ref)}
+    else
+      Rooms.set_typing(room_id, user.id, false)
+
+      {:noreply,
+       socket
+       |> assign(:typing_broadcast_at, nil)
+       |> assign(:typing_clear_timer_ref, nil)}
+    end
+  end
+
+  # Typing broadcasts are throttled to at most once every 2200 ms
+  # while the user is typing.
+  defp typing_broadcast_decision(now, last) do
+    case last do
+      nil -> {true, now}
+      ts when now - ts >= 2200 -> {true, now}
+      _ -> {false, last}
+    end
+  end
+
   defp assign_video_participant_count(socket, %{"participants" => n}) when is_integer(n),
     do: assign(socket, :participant_count, n)
 
@@ -262,9 +318,9 @@ defmodule BeamChatWeb.RoomLive.Show do
         <h1 class="font-display text-xl font-semibold tracking-tight text-base-content">
           {@room.name}
         </h1>
-         <span class="badge badge-ghost badge-sm">@{@room.slug}</span>
+        <span class="badge badge-ghost badge-sm">@{@room.slug}</span>
       </div>
-      
+
       <%= case @access do %>
         <% {:blocked, :upgrade_required} -> %>
           <div
@@ -272,12 +328,12 @@ defmodule BeamChatWeb.RoomLive.Show do
             id="access-upgrade-panel"
           >
             <h2 class="font-display font-semibold text-lg text-base-content">Paid room</h2>
-            
+
             <p class="text-sm text-base-content/80">
               Subscribe with your wallet balance ({format_money(@wallet_balance)} {@room.currency} available).
               Price: {format_money(@room.price || Decimal.new(0))} {@room.currency} for 30 days.
             </p>
-            
+
             <div class="flex flex-wrap gap-2">
               <%= if sufficient_for_paid_room?(@wallet_balance, @room.price) do %>
                 <button
@@ -293,7 +349,7 @@ defmodule BeamChatWeb.RoomLive.Show do
                   Top up wallet
                 </.link>
               <% end %>
-               <.link navigate={~p"/rooms"} class="btn btn-ghost btn-sm">Browse other rooms</.link>
+              <.link navigate={~p"/rooms"} class="btn btn-ghost btn-sm">Browse other rooms</.link>
             </div>
           </div>
         <% {:blocked, :membership_required} -> %>
@@ -302,23 +358,23 @@ defmodule BeamChatWeb.RoomLive.Show do
             id="access-request-panel"
           >
             <h2 class="font-display font-semibold text-lg text-base-content">Membership required</h2>
-            
+
             <p class="text-sm text-base-content/80">
               This room is private or secret. Request access from the owner or a moderator, or use an
               invite link when your host shares one.
             </p>
-            
+
             <ul class="text-sm text-base-content/70 list-disc pl-5 space-y-1">
               <li>Owners can add members from the moderation tools (coming soon).</li>
-              
+
               <li>If you were invited, accept the invite from your email or dashboard.</li>
             </ul>
-             <.link navigate={~p"/rooms"} class="btn btn-outline btn-sm">Back to directory</.link>
+            <.link navigate={~p"/rooms"} class="btn btn-outline btn-sm">Back to directory</.link>
           </div>
         <% {:blocked, :secret_forbidden} -> %>
           <div class="rounded-box border border-error/40 bg-error/10 p-6" id="access-secret-panel">
             <p class="text-sm text-base-content/90">You do not have access to this secret room.</p>
-             <.link navigate={~p"/rooms"} class="btn btn-ghost btn-sm mt-3">Leave</.link>
+            <.link navigate={~p"/rooms"} class="btn btn-ghost btn-sm mt-3">Leave</.link>
           </div>
         <% :ok -> %>
           <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_14rem] items-stretch">
@@ -338,7 +394,7 @@ defmodule BeamChatWeb.RoomLive.Show do
                 >
                   No messages yet — say hello.
                 </div>
-                
+
                 <div
                   :for={{mid, msg} <- @streams.messages}
                   id={mid}
@@ -347,23 +403,23 @@ defmodule BeamChatWeb.RoomLive.Show do
                   <div class="shrink-0 w-24 text-xs text-base-content/55 truncate">
                     {display_name(msg.sender)}
                   </div>
-                  
+
                   <div class="min-w-0 flex-1">
                     <p class="text-base-content whitespace-pre-wrap break-words">{msg.content}</p>
-                    
+
                     <p class="text-[0.65rem] text-base-content/45 mt-0.5">
                       {format_time(msg.inserted_at)}
                     </p>
                   </div>
                 </div>
               </div>
-              
+
               <div class="border-t border-base-300 px-3 py-2 min-h-[2.5rem] text-xs text-base-content/65">
                 <%= if typing_line(@typing_user_ids, @current_user.id) != "" do %>
                   <span id="typing-indicator">{typing_line(@typing_user_ids, @current_user.id)}</span>
                 <% end %>
               </div>
-              
+
               <.form
                 for={@message_form}
                 id="room-message-form"
@@ -385,7 +441,7 @@ defmodule BeamChatWeb.RoomLive.Show do
                 </button>
               </.form>
             </section>
-            
+
             <aside
               class="rounded-box border border-base-300 bg-base-200/40 p-3"
               id="room-presence-panel"
@@ -393,7 +449,7 @@ defmodule BeamChatWeb.RoomLive.Show do
               <h2 class="text-xs font-semibold uppercase tracking-wide text-base-content/60 mb-2">
                 Here now
               </h2>
-              
+
               <ul class="space-y-2 text-sm" id="presence-list">
                 <li
                   :for={{uid, data} <- @presence_list_sorted}
@@ -401,14 +457,15 @@ defmodule BeamChatWeb.RoomLive.Show do
                 >
                   <span class="font-medium text-base-content truncate block">
                     {presence_label(uid, data)}
-                  </span> <span class="text-[0.65rem] text-success">● online</span>
+                  </span>
+                  <span class="text-[0.65rem] text-success">● online</span>
                 </li>
               </ul>
-              
+
               <p :if={map_size(@presence_list) == 0} class="text-xs text-base-content/55">
                 Connecting…
               </p>
-              
+
               <.live_component
                 :if={@video_configured}
                 module={BeamChatWeb.VideoLive}
@@ -488,5 +545,66 @@ defmodule BeamChatWeb.RoomLive.Show do
     end
   rescue
     _ -> false
+  end
+
+  # Re-fetch the user from the database so that a ban issued mid-session
+  # cannot keep the LiveView acting on behalf of an authorised user.
+  # `socket.assigns.current_user` was populated at socket-connect time
+  # from the cookie token and is not refreshed by `assign_new` callbacks
+  # on every event. This helper is the per-event guard called from
+  # `handle_event/3` for any mutating action.
+  #
+  # Returns `{:ok, %User{}}` for an active user, or `{:error, reason}` if
+  # the user no longer exists, has been banned, or the room access check
+  # now fails (e.g. paid subscription expired mid-session).
+  #
+  # See SECURITY_REVIEW.md P1 #7.
+  defp fresh_active_user(socket) do
+    case socket.assigns[:current_user] do
+      nil ->
+        {:error, :no_user}
+
+      %User{id: uid} ->
+        case Repo.get_by(User, id: uid) do
+          nil -> {:error, :user_gone}
+          %User{is_banned: true} -> {:error, :banned}
+          %User{} = fresh -> authorize_against_room(socket, fresh)
+        end
+    end
+  end
+
+  defp authorize_against_room(socket, %User{} = fresh) do
+    case AccessPolicy.check(socket.assigns.room, fresh) do
+      :ok -> {:ok, fresh}
+      {:blocked, reason} -> {:error, {:access, reason}}
+    end
+  end
+
+  defp reject_banned(socket, reason) do
+    case reason do
+      :banned ->
+        socket
+        |> put_flash(:error, "Your account is no longer authorised to perform this action.")
+        |> push_navigate(to: ~p"/rooms")
+
+      :user_gone ->
+        socket
+        |> put_flash(:error, "Your account could not be found.")
+        |> push_navigate(to: ~p"/auth/login")
+
+      {:access, :upgrade_required} ->
+        socket
+        |> put_flash(:error, "Your paid subscription has lapsed.")
+        |> push_navigate(to: ~p"/rooms/#{socket.assigns.room.slug}")
+
+      {:access, _other} ->
+        socket
+        |> put_flash(:error, "You no longer have access to this room.")
+        |> push_navigate(to: ~p"/rooms")
+
+      _ ->
+        socket
+        |> put_flash(:error, "Action not permitted.")
+    end
   end
 end
