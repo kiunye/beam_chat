@@ -115,7 +115,6 @@ defmodule BeamChatWeb.VideoLive do
       id={@id}
       data-video-state={@video_state}
       phx-hook={@can_video && "LiveKitRoom"}
-      phx-update="ignore"
       class="rounded-box border border-base-300 bg-base-200/40 p-3 space-y-2"
     >
       <div class="flex items-center justify-between">
