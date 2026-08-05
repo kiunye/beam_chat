@@ -7,24 +7,6 @@ import Config
 # any compile-time configuration in here, as it won't be applied.
 # The block below contains prod specific runtime configuration.
 
-# Configure libcluster for Erlang clustering
-# In development, use local EPMD strategy
-# In production (Swarm), use DNS polling strategy
-cluster_topologies =
-  if Mix.env() in [:dev, :test] do
-    # Development: local node clustering via EPMD
-    [app: BeamChat.Application, strategy: Cluster.Strategy.Epmd]
-  else
-    # Production: DNS-based clustering for Swarm
-    [
-      app: BeamChat.Application,
-      strategy: Cluster.Strategy.DNSPoll,
-      config: [query: System.get_env("DNS_CLUSTER_QUERY", "tasks.beam_chat_app")]
-    ]
-  end
-
-config :libcluster, topologies: [cluster: cluster_topologies]
-
 # ## Using releases
 #
 # If you use `mix release`, you need to explicitly enable the server

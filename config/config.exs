@@ -21,7 +21,9 @@ config :beam_chat, Oban,
        # Flip expired group_subscriptions to "expired" (SECURITY_REVIEW.md P2 #13)
        {"0 * * * *", BeamChat.Workers.ExpireSubscriptions},
        # Keep the ETS moderation rule cache fresh (SECURITY_REVIEW.md P2 #21)
-       {"*/5 * * * *", BeamChat.Workers.RefreshModerationCache}
+       {"*/5 * * * *", BeamChat.Workers.RefreshModerationCache},
+       # Bound the lifetime of pending M-Pesa top-ups (SECURITY_REVIEW.md P1 #10)
+       {"*/5 * * * *", BeamChat.Payments.ObanWorkers.MpesaPendingExpiry}
      ]}
   ]
 

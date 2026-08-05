@@ -8,13 +8,6 @@ defmodule BeamChat.Payments.ObanWorkers.MpesaStkWorker do
   alias BeamChat.Wallet
   alias BeamChat.Wallet.WalletTransaction
 
-  # After this delay, if the STK push has not produced a webhook callback
-  # that flipped the txn to "completed", we mark it "failed" so the user
-  # sees a clean refund/expiry message and the row stops being "pending".
-  # This bounds the lifetime of a pending row regardless of how many Oban
-  # attempts are left. See SECURITY_REVIEW.md P1 #10.
-  @pending_expiry_ms :timer.minutes(5)
-
   @impl Oban.Worker
   def perform(%Oban.Job{attempt: attempt, max_attempts: max_attempts} = job) do
     %{"user_id" => _user_id, "txn_id" => txn_id, "phone" => phone} = job.args
@@ -32,10 +25,9 @@ defmodule BeamChat.Payments.ObanWorkers.MpesaStkWorker do
       true ->
         case run_stk_for_txn(txn, phone) do
           :ok ->
-            # STK push accepted by Daraja. Schedule a watchdog: if the
-            # webhook has not flipped the txn to "completed" within
-            # @pending_expiry_ms, mark it "failed".
-            schedule_pending_watchdog(txn.id)
+            # STK push accepted by Daraja. The scheduled MpesaPendingExpiry scan
+            # (SECURITY_REVIEW.md P1 #10) marks this txn "failed" if no webhook
+            # flips it to "completed" within the expiry window.
             :ok
 
           {:error, reason} when attempt >= max_attempts ->
@@ -93,43 +85,16 @@ defmodule BeamChat.Payments.ObanWorkers.MpesaStkWorker do
   @doc """
   Builds an M-Pesa `AccountReference` from a wallet transaction UUID.
 
-  Daraja 2.0 accepts up to ~40 chars; legacy Daraja accepts 20. We strip
-  hyphens and slice to 18 hex chars — well within both limits — giving
-  18×4 = 72 bits of entropy. Collision probability is negligible for our
-  scale (vs. the previous 12-char / 48-bit slice which was ~1/4096 per
-  same-microsecond pair).
+  We strip hyphens and slice the LAST 18 hex chars, because the tail of the
+  UUID carries the distinguishing entropy: for v4 UUIDs the head holds fixed
+  version/variant bits while the last 12 hex digits are fully random. 18
+  chars is within the legacy Daraja 20-char AccountReference limit and gives
+  ~56+ bits of real entropy, so collision probability is negligible.
   """
   def account_ref(txn_id) when is_binary(txn_id) do
     txn_id
     |> String.replace("-", "")
-    |> String.slice(0, 18)
-  end
-
-  # Fire-and-forget watchdog. The spawned process checks the txn after the
-  # expiry window; if it is still "pending", it marks it "failed" so the
-  # user-facing "top up pending" UI never gets stuck.
-  defp schedule_pending_watchdog(txn_id) do
-    parent = self()
-
-    spawn(fn ->
-      receive do
-        :ok -> :ok
-      after
-        @pending_expiry_ms ->
-          _ = expire_if_pending(txn_id)
-          send(parent, :ok)
-      end
-    end)
-  end
-
-  defp expire_if_pending(txn_id) do
-    txn = Repo.get(WalletTransaction, txn_id)
-
-    if txn && txn.status == "pending" do
-      mark_failed(txn, "pending_expired_no_callback")
-    else
-      {:ok, :no_op}
-    end
+    |> String.slice(-18, 18)
   end
 
   defp mark_failed(%WalletTransaction{} = txn, reason) do

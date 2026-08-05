@@ -1,6 +1,6 @@
-defmodule BeamChat.MessagePipeline.Validator do
+defmodule BeamChat.Messages.Validator do
   @moduledoc """
-  Validates incoming chat messages before processing.
+  Validates incoming chat messages before they are moderated and persisted.
 
   Each message carries a `:kind` discriminator (`:room` or `:direct`) plus
   the corresponding destination id (`:room_id` or `:conversation_id`). The
@@ -10,10 +10,10 @@ defmodule BeamChat.MessagePipeline.Validator do
   - **Content** — non-empty, ≤10,000 bytes, trimmed before persistence.
   - **Destination** — stub stage that reserves a slot for future access
     checks (e.g. verifying the sender is a conversation participant). The
-    actual moderation rules run in the next pipeline stage (`RuleEngine`).
+    actual moderation rules run in `BeamChat.Moderation.RuleEngine`.
   """
 
-  @typedoc "Room and user identifiers accepted by the pipeline (DB uses UUID strings)."
+  @typedoc "Room and user identifiers accepted by the validator (DB uses UUID strings)."
   @type pipeline_id :: pos_integer() | Ecto.UUID.t()
 
   @type destination :: :room | :direct
@@ -86,7 +86,7 @@ defmodule BeamChat.MessagePipeline.Validator do
   # performed `valid_pipeline_id?/1` checks for the destination and user
   # ids. This stage is a pass-through that exists to reserve a slot for
   # future per-message authorisation checks (e.g. access policy for DM
-  # participants) without changing the pipeline's call shape.
+  # participants) without changing the validator's call shape.
   defp validate_destination({:ok, message}), do: {:ok, message}
   defp validate_destination({:error, _reason} = error), do: error
 

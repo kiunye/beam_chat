@@ -18,6 +18,8 @@ defmodule BeamChat.Direct.DirectMessage do
     belongs_to :sender, BeamChat.Accounts.User, foreign_key: :sender_id
   end
 
+  @type t :: %__MODULE__{}
+
   def changeset(dm, attrs) do
     dm
     |> cast(attrs, [

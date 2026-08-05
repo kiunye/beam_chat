@@ -3,8 +3,8 @@ defmodule BeamChatWeb.RoomPresence do
   Cluster-wide presence for chat rooms.
 
   Phoenix.Presence replicates presence CRDT deltas over `BeamChat.PubSub`, so
-  users tracked on one node appear on every connected node — replication does
-  not depend on Horde (accepted limitation, SECURITY_REVIEW.md P3 #28).
+  users tracked on one node appear on every connected node. Presence is the
+  sole room-membership mechanism — there is no per-room process layer.
   """
 
   use Phoenix.Presence,

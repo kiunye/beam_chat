@@ -1,10 +1,10 @@
-defmodule BeamChat.MessagePipeline.Persister do
+defmodule BeamChat.Messages.Persister do
   @moduledoc """
   Persists messages to the database.
 
-  Valid messages in a batch are written with a single `Repo.insert_all/3` when possible,
+  Valid messages in a list are written with a single `Repo.insert_all/3` when possible,
   falling back to one `Repo.insert/1` per map on encoding or DB errors. Invalid shapes
-  still use per-row handling. `persist_ordered/1` returns one result per input for Broadway.
+  still use per-row handling. `persist_ordered/1` returns one result per input.
   """
 
   require Logger
@@ -83,10 +83,10 @@ defmodule BeamChat.MessagePipeline.Persister do
   defp batch_insert_all!(messages) do
     now = DateTime.utc_now() |> DateTime.truncate(:second)
 
-    # A single Broadway batch may contain both room messages and DMs (pushed
-    # within the same 5s window). Insert per-kind so each subset maps to one
-    # `insert_all` against the right schema, then reassemble results in the
-    # original input order so Broadway's `persist_ordered` contract holds.
+    # A single call may contain both room messages and DMs. Insert per-kind
+    # so each subset maps to one `insert_all` against the right schema, then
+    # reassemble results in the original input order so `persist_ordered`'s
+    # contract holds.
     #
     # `insert_kind/3` returns results in the same order as its input subset.
     # We pass two queues (room, direct) into `Enum.map_reduce/3` and pop

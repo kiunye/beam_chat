@@ -2,12 +2,10 @@ defmodule BeamChatWeb.RoomLive.Show do
   use BeamChatWeb, :live_view
 
   alias BeamChat.Accounts.User
-  alias BeamChat.MessagePipeline.Producer
   alias BeamChat.Messages.Message
   alias BeamChat.Repo
   alias BeamChat.Rooms
   alias BeamChat.Rooms.AccessPolicy
-  alias BeamChat.Rooms.Room
   alias BeamChat.Video.TokenService
   alias BeamChat.Wallet
   alias BeamChatWeb.RoomPresence
@@ -44,6 +42,7 @@ defmodule BeamChatWeb.RoomLive.Show do
           |> assign(:topic, topic)
           |> assign(:typing_user_ids, MapSet.new())
           |> assign(:typing_clear_timer_ref, nil)
+          |> assign(:typing_broadcast_at, nil)
           |> assign(:presence_list, %{})
           |> assign(:presence_list_sorted, [])
           |> assign(:message_form, message_form)
@@ -53,8 +52,6 @@ defmodule BeamChatWeb.RoomLive.Show do
 
         socket =
           if connected?(socket) do
-            Rooms.ensure_room_server_started(room.id)
-            Room.join_room(room.id, user.id, user.username)
             Phoenix.PubSub.subscribe(BeamChat.PubSub, topic)
 
             {:ok, _} =
@@ -87,6 +84,7 @@ defmodule BeamChatWeb.RoomLive.Show do
     |> assign(:topic, nil)
     |> assign(:typing_user_ids, MapSet.new())
     |> assign(:typing_clear_timer_ref, nil)
+    |> assign(:typing_broadcast_at, nil)
     |> assign(:presence_list, %{})
     |> assign(:presence_list_sorted, [])
     |> assign(:message_form, nil)
@@ -111,8 +109,6 @@ defmodule BeamChatWeb.RoomLive.Show do
     topic = socket.assigns[:topic]
 
     if socket.assigns[:access] == :ok && user && room && topic do
-      Room.leave_room(room.id, user.id)
-
       # `untrack/3` is a call to the presence server; run it in a detached task
       # so shutdown never blocks on a busy presence process (SECURITY_REVIEW.md
       # P3 #25). The pid is captured first — the task process must not be the
@@ -143,8 +139,12 @@ defmodule BeamChatWeb.RoomLive.Show do
   end
 
   def handle_info({:clear_my_typing, user_id}, socket) do
-    Room.set_typing(socket.assigns.room.id, user_id, false)
-    {:noreply, assign(socket, :typing_clear_timer_ref, nil)}
+    Rooms.set_typing(socket.assigns.room.id, user_id, false)
+
+    {:noreply,
+     socket
+     |> assign(:typing_clear_timer_ref, nil)
+     |> assign(:typing_broadcast_at, nil)}
   end
 
   def handle_info(%Phoenix.Socket.Broadcast{event: "presence_diff", topic: topic}, socket) do
@@ -168,21 +168,21 @@ defmodule BeamChatWeb.RoomLive.Show do
 
     case fresh_active_user(socket) do
       {:ok, user} ->
-        Producer.push_messages(BeamChat.MessagePipeline, [
-          %{
-            room_id: socket.assigns.room.id,
-            user_id: user.id,
-            content: content,
-            inserted_at: nil
-          }
-        ])
+        case Rooms.send_message(socket.assigns.room.id, user.id, content) do
+          {:ok, _row} ->
+            Rooms.set_typing(socket.assigns.room.id, user.id, false)
 
-        Room.set_typing(socket.assigns.room.id, user.id, false)
+            {:noreply,
+             socket
+             |> assign(:message_form, to_form(%{"content" => ""}, as: :message))
+             |> assign(:typing_clear_timer_ref, nil)}
 
-        {:noreply,
-         socket
-         |> assign(:message_form, to_form(%{"content" => ""}, as: :message))
-         |> assign(:typing_clear_timer_ref, nil)}
+          {:error, {:blocked, reason}} ->
+            {:noreply, put_flash(socket, :error, "Message blocked: #{reason}")}
+
+          {:error, _reason} ->
+            {:noreply, put_flash(socket, :error, "Could not send that message.")}
+        end
 
       {:error, reason} ->
         {:noreply, reject_banned(socket, reason)}
@@ -231,17 +231,7 @@ defmodule BeamChatWeb.RoomLive.Show do
     case fresh_active_user(socket) do
       {:ok, user} ->
         room_id = socket.assigns.room.id
-
-        timer_ref =
-          if String.trim(content) != "" do
-            Room.set_typing(room_id, user.id, true)
-            Process.send_after(self(), {:clear_my_typing, user.id}, 2200)
-          else
-            Room.set_typing(room_id, user.id, false)
-            nil
-          end
-
-        {:noreply, assign(socket, :typing_clear_timer_ref, timer_ref)}
+        handle_typing_content(socket, user, room_id, content)
 
       {:error, _reason} ->
         # Silently no-op typing for banned/missing users. They can't see the
@@ -273,6 +263,45 @@ defmodule BeamChatWeb.RoomLive.Show do
     )
 
     {:noreply, socket}
+  end
+
+  # Applies the typing event for a known user: broadcasts the typing
+  # indicator (throttled to at most once every 2200 ms — see
+  # `typing_broadcast_decision/2`) and schedules the clear timer, or clears
+  # typing when the content is blank.
+  defp handle_typing_content(socket, user, room_id, content) do
+    if String.trim(content) != "" do
+      now = System.monotonic_time(:millisecond)
+
+      {should_broadcast, broadcast_at} =
+        typing_broadcast_decision(now, socket.assigns[:typing_broadcast_at])
+
+      if should_broadcast, do: Rooms.set_typing(room_id, user.id, true)
+
+      timer_ref = Process.send_after(self(), {:clear_my_typing, user.id}, 2200)
+
+      {:noreply,
+       socket
+       |> assign(:typing_broadcast_at, broadcast_at)
+       |> assign(:typing_clear_timer_ref, timer_ref)}
+    else
+      Rooms.set_typing(room_id, user.id, false)
+
+      {:noreply,
+       socket
+       |> assign(:typing_broadcast_at, nil)
+       |> assign(:typing_clear_timer_ref, nil)}
+    end
+  end
+
+  # Typing broadcasts are throttled to at most once every 2200 ms
+  # while the user is typing.
+  defp typing_broadcast_decision(now, last) do
+    case last do
+      nil -> {true, now}
+      ts when now - ts >= 2200 -> {true, now}
+      _ -> {false, last}
+    end
   end
 
   defp assign_video_participant_count(socket, %{"participants" => n}) when is_integer(n),

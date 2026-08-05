@@ -45,8 +45,4 @@ config :phoenix,
 # mid-suite — tests invoke those workers explicitly instead.
 config :beam_chat, Oban, testing: :inline, plugins: []
 
-# Zero stale-window makes RoomServer member eviction testable without sleeps.
-# The periodic sweep timer stays at its 60s default so it never fires in-suite.
-config :beam_chat, :room_member_stale_after_ms, 0
-
 config :beam_chat, :sso_jwt_secret, "test_sso_jwt_secret_min_32_chars______"
