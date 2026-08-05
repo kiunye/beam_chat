@@ -1,0 +1,169 @@
+# Docker Swarm deployment stack for BEAM Chat (production).
+#
+# Usage:
+#   docker stack deploy -c docker-compose.swarm.yml beam_chat
+#
+# Required environment variables (inject at deploy time via
+# `--env-file .env` / exported CI variables — `docker stack deploy` does NOT
+# auto-read a `.env` file; no literal values are allowed in this file):
+#   DATABASE_URL, SECRET_KEY_BASE, PHX_HOST, RELEASE_COOKIE, RELEASE_NODE,
+#   LIVEKIT_API_KEY, LIVEKIT_API_SECRET, LIVEKIT_URL,
+#   MPESA_CONSUMER_KEY, MPESA_CONSUMER_SECRET, PAYSTACK_SECRET_KEY,
+#   DB_USER, DB_PASSWORD, ACME_EMAIL, CI_PROJECT_PATH, IMAGE_TAG
+#
+# Swarm node labels that MUST be set on the manager nodes before deploy:
+#   - livekit node:  node.labels.livekit == true
+#   - postgres node: node.labels.db == true
+#   (e.g. docker node update --label-add livekit=true <node-id>)
+#
+# Follow-on milestone (Dockerfile + rel/env.sh.eex + GitLab CI) is out of
+# scope for this file — the app image
+# registry.gitlab.com/${CI_PROJECT_PATH}:${IMAGE_TAG} is expected to be built
+# and pushed by that pipeline.
+#
+# Design notes:
+#   - No Redis service: Oban persists jobs in Postgres (plan drops Redis).
+#   - LiveKit's UDP media port is published with mode: host (§11.2 mitigation
+#     for Swarm's unreliable UDP routing mesh).
+#   - Traefik routing labels live under deploy.labels because in Swarm mode
+#     Traefik reads labels from the service, not the task containers.
+
+networks:
+  beam_net:
+    driver: overlay
+    attachable: true
+
+volumes:
+  postgres_data:
+  traefik_certs:
+
+configs:
+  livekit_config:
+    file: ./livekit_config.yaml
+
+services:
+  traefik:
+    image: traefik:v3.1
+    command:
+      - "--providers.swarm=true"
+      - "--providers.swarm.exposedByDefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.le.acme.tlschallenge=true"
+      - "--certificatesresolvers.le.acme.email=${ACME_EMAIL}"
+      - "--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_certs:/letsencrypt
+    networks:
+      - beam_net
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+  app:
+    image: registry.gitlab.com/${CI_PROJECT_PATH}:${IMAGE_TAG}
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+      PHX_HOST: ${PHX_HOST}
+      RELEASE_COOKIE: ${RELEASE_COOKIE}
+      # The per-container Erlang node name is derived at boot by
+      # rel/env.sh.eex in the follow-on milestone; swarm replicas must not
+      # share a fixed RELEASE_NODE value.
+      RELEASE_NODE: ${RELEASE_NODE}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
+      LIVEKIT_URL: ${LIVEKIT_URL}   # public WSS URL for clients, e.g. wss://video.example.com
+      MPESA_CONSUMER_KEY: ${MPESA_CONSUMER_KEY}
+      MPESA_CONSUMER_SECRET: ${MPESA_CONSUMER_SECRET}
+      PAYSTACK_SECRET_KEY: ${PAYSTACK_SECRET_KEY}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - beam_net
+    deploy:
+      replicas: 3
+      update_config:
+        parallelism: 1
+        delay: 30s
+        order: start-first
+        failure_action: rollback
+      rollback_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.app.rule=Host(`${PHX_HOST}`)"
+        - "traefik.http.routers.app.entrypoints=websecure"
+        - "traefik.http.routers.app.tls.certresolver=le"
+        - "traefik.http.services.app.loadbalancer.server.port=4000"
+        - "traefik.http.services.app.loadbalancer.sticky.cookie=true"
+        - "traefik.http.services.app.loadbalancer.sticky.cookie.name=beam_chat_lb"
+        - "traefik.http.services.app.loadbalancer.sticky.cookie.secure=true"
+
+  livekit:
+    image: livekit/livekit-server:latest
+    command: --config /etc/livekit/config.yaml
+    environment:
+      # Compose interpolates ${LIVEKIT_API_KEY} / ${LIVEKIT_API_SECRET} from
+      # the deploy-time env; the container receives "<key>: <secret>" which is
+      # LiveKit's LIVEKIT_KEYS format. Keys are never baked into
+      # livekit_config.yaml.
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}"
+    configs:
+      - source: livekit_config
+        target: /etc/livekit/config.yaml
+    ports:
+      - target: 7880
+        published: 7880
+        protocol: tcp
+      - target: 7881
+        published: 7881
+        protocol: tcp
+      - target: 7882
+        published: 7882
+        protocol: udp
+        mode: host   # ICE/UDP media — host mode bypasses Swarm's UDP routing mesh (§11.2)
+    networks:
+      - beam_net
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.livekit == true
+      # The firewall on the node carrying the livekit label must open
+      # 7880/tcp, 7881/tcp and 7882/udp. rtc.use_external_ip: true (see
+      # livekit_config.yaml) requires that node's public IP / NAT forwarding —
+      # LiveKit detects its external IP via STUN at startup.
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: beam_chat_prod
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - beam_net
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.db == true

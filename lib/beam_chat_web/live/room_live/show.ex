@@ -57,7 +57,8 @@ defmodule BeamChatWeb.RoomLive.Show do
             {:ok, _} =
               RoomPresence.track(self(), topic, user.id, %{
                 username: user.username,
-                online_at: System.system_time(:second)
+                online_at: System.system_time(:second),
+                video_active: false
               })
 
             presence_list = RoomPresence.list(topic)
@@ -242,8 +243,24 @@ defmodule BeamChatWeb.RoomLive.Show do
 
   # Video events sent from the client-side LiveKitRoom hook are forwarded
   # to the VideoLive LiveComponent (id="video-panel") for state tracking.
+  #
+  # NOTE: `participant_count` must ride the `send_update` — the component
+  # update message is processed before the parent's own
+  # `assign_video_participant_count/2` lands on the first connect, and the
+  # component's render reads `@participant_count` whenever `video_state` is
+  # `:connected`. Without it the component render raises KeyError. This also
+  # feeds the "N live" badge in the video panel (falls back to 1 when the
+  # count is unknown).
   def handle_event("video_connected", params, socket) do
-    send_update(BeamChatWeb.VideoLive, id: "video-panel", video_state: :connected)
+    participant_count = participant_count_from_params(params)
+
+    send_update(BeamChatWeb.VideoLive,
+      id: "video-panel",
+      video_state: :connected,
+      participant_count: participant_count
+    )
+
+    update_my_video_presence(socket, true)
 
     {:noreply,
      socket
@@ -252,6 +269,7 @@ defmodule BeamChatWeb.RoomLive.Show do
 
   def handle_event("video_disconnected", _params, socket) do
     send_update(BeamChatWeb.VideoLive, id: "video-panel", video_state: :idle)
+    update_my_video_presence(socket, false)
     {:noreply, socket}
   end
 
@@ -304,10 +322,30 @@ defmodule BeamChatWeb.RoomLive.Show do
     end
   end
 
-  defp assign_video_participant_count(socket, %{"participants" => n}) when is_integer(n),
-    do: assign(socket, :participant_count, n)
+  defp assign_video_participant_count(socket, params) do
+    case participant_count_from_params(params) do
+      nil -> socket
+      n -> assign(socket, :participant_count, n)
+    end
+  end
 
-  defp assign_video_participant_count(socket, _), do: socket
+  defp participant_count_from_params(%{"participants" => n}) when is_integer(n), do: n
+  defp participant_count_from_params(_), do: nil
+
+  # Flips this LiveView process's own presence entry between video states so
+  # the room has a cluster-wide view of who is currently in the LiveKit video
+  # room. Guarded like `terminate/2` so it only runs for an authorised member
+  # on a room topic. `RoomPresence.update/4` is a GenServer call — it runs
+  # inline inside the event handler, like the `track/4` call at mount.
+  defp update_my_video_presence(socket, active) do
+    if socket.assigns[:access] == :ok && socket.assigns[:topic] && socket.assigns[:current_user] do
+      RoomPresence.update(self(), socket.assigns.topic, socket.assigns.current_user.id, fn meta ->
+        Map.put(meta, :video_active, active)
+      end)
+    end
+
+    :ok
+  end
 
   @impl true
   def render(assigns) do
@@ -459,6 +497,13 @@ defmodule BeamChatWeb.RoomLive.Show do
                     {presence_label(uid, data)}
                   </span>
                   <span class="text-[0.65rem] text-success">● online</span>
+                  <span
+                    :if={presence_video_active?(data)}
+                    class="badge badge-info badge-xs ml-1"
+                    id={"presence-video-" <> uid}
+                  >
+                    In video
+                  </span>
                 </li>
               </ul>
 
@@ -490,6 +535,14 @@ defmodule BeamChatWeb.RoomLive.Show do
 
   defp presence_label(_uid, %{metas: [%{username: u} | _]}) when is_binary(u), do: u
   defp presence_label(uid, _), do: String.slice(uid, 0, 8) <> "…"
+
+  # True when any of the member's presence metas marks them as currently in
+  # the LiveKit video room.
+  defp presence_video_active?(%{metas: metas}) when is_list(metas) do
+    Enum.any?(metas, &(&1[:video_active] == true))
+  end
+
+  defp presence_video_active?(_), do: false
 
   defp cancel_typing_clear_timer(socket) do
     case socket.assigns[:typing_clear_timer_ref] do

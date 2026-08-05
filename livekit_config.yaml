@@ -1,0 +1,20 @@
+# LiveKit server configuration — production/Swarm.
+# Keys are intentionally NOT here: they are injected at runtime via the
+# LIVEKIT_KEYS environment variable (format "key: secret").
+# See docker-compose.swarm.yml for the service wiring.
+
+port: 7880
+bind_addresses:
+  - 0.0.0.0
+
+rtc:
+  tcp_port: 7881
+  udp_port: 7882          # UDP mux for all ICE/UDP traffic (mutually exclusive with port_range_*)
+  use_external_ip: true
+
+room:
+  auto_create: true
+  empty_timeout: 300
+
+logging:
+  level: info
