@@ -69,34 +69,19 @@ defmodule BeamChat.Rooms do
     with {:ok, validated} <- Validator.validate(data) do
       case RuleEngine.apply_rules(validated) do
         {:blocked, _msg, reason} -> {:error, {:blocked, reason}}
-        {:flagged, msg, _reason} -> persist_room_message(msg)
-        msg when is_map(msg) -> persist_room_message(msg)
+        {:flagged, msg, _reason} -> persist_and_broadcast(msg)
+        msg when is_map(msg) -> persist_and_broadcast(msg)
       end
     end
   end
 
-  defp persist_room_message(data) do
-    case Persister.persist_ordered([data]) do
-      [{:ok, %Message{} = row}] ->
-        row = Repo.preload(row, :sender)
-        broadcast_new_message(row)
-
-        :telemetry.execute(
-          [:beam_chat, :message_pipeline, :persisted],
-          %{count: 1, failed_count: 0},
-          %{}
-        )
-
-        {:ok, row}
-
-      [{:error, reason} | _] ->
-        :telemetry.execute(
-          [:beam_chat, :message_pipeline, :failed],
-          %{count: 1},
-          %{reason: inspect(reason)}
-        )
-
-        {:error, {:persist_failed, reason}}
+  defp persist_and_broadcast(msg) do
+    with {:ok, %Message{} = row} <- Persister.persist_and_preload(msg) do
+      broadcast_new_message(row)
+      {:ok, row}
+    else
+      {:error, _reason} = err -> err
+      {:ok, other} -> {:error, {:persist_failed, {:unexpected_row, other}}}
     end
   end
 

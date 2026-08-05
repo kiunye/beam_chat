@@ -149,6 +149,16 @@ defmodule BeamChat.Wallet do
       %WalletTransaction{status: "pending"} = pending ->
         rollback_or_ok(finalize_pending_credit(wallet, pending, amount, provider, extra_metadata))
 
+      # A row the M-Pesa expiry cron flipped to "failed" locally before the
+      # real callback arrived. The webhook's `complete_provider_credit/5` call
+      # routes here; `finalize_pending_credit/5` still enforces
+      # `pending_amount_ok/2` (amount must EXACTLY equal the row's amount) and
+      # flips the row to "completed", so any later webhook retry hits the
+      # "completed" clause and never double-credits.
+      %WalletTransaction{status: "failed", metadata: %{"error" => "pending_expired_no_callback"}} =
+          expired ->
+        rollback_or_ok(finalize_pending_credit(wallet, expired, amount, provider, extra_metadata))
+
       nil ->
         # No pending row existed. This is the path that bypasses
         # `pending_amount_ok/2`, so we add explicit guards:

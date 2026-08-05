@@ -82,6 +82,10 @@ defmodule BeamChatWeb.Telemetry do
       counter("beam_chat.message_pipeline.failed.count",
         description: "Messages rejected or dropped (see log for reasons)"
       ),
+      counter("beam_chat.moderation_rules.empty.count",
+        description:
+          "Moderation rules cache fell back to empty on a DB error (fail-open: messages pass unmoderated)"
+      ),
 
       # VM Metrics
       summary("vm.memory.total", unit: {:byte, :kilobyte}),

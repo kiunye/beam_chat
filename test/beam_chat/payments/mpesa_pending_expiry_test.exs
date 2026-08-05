@@ -55,6 +55,23 @@ defmodule BeamChat.Payments.ObanWorkers.MpesaPendingExpiryTest do
       assert reloaded.status == "completed"
     end
 
+    test "does not flip a completed txn and leaves its metadata untouched", %{wallet: wallet} do
+      txn =
+        wallet_transaction_fixture(wallet, %{
+          status: "completed",
+          provider: "mpesa",
+          metadata: %{"CheckoutRequestID" => "ck-completed-123"}
+        })
+
+      backdate(txn, 6)
+
+      assert :ok = MpesaPendingExpiry.perform(%Oban.Job{args: %{}})
+
+      reloaded = Repo.get!(WalletTransaction, txn.id)
+      assert reloaded.status == "completed"
+      assert reloaded.metadata == %{"CheckoutRequestID" => "ck-completed-123"}
+    end
+
     test "leaves an old pending paystack txn alone", %{wallet: wallet} do
       txn =
         wallet_transaction_fixture(wallet, %{

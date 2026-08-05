@@ -111,6 +111,15 @@ defmodule BeamChat.Moderation.RuleEngine do
       # on the next tick. Log loudly — an empty cache means messages pass
       # unmoderated, so this must be visible.
       Logger.error("moderation rules cache refresh failed: #{Exception.message(e)}")
+
+      # Emit a fail-open metric so dashboards can alert on an empty cache
+      # (messages passing unmoderated) instead of relying on log scraping.
+      :telemetry.execute(
+        [:beam_chat, :moderation_rules, :empty],
+        %{count: 1},
+        %{error: inspect(e)}
+      )
+
       true = :ets.insert(tid, {@rules_snapshot_key, []})
       {:error, e}
   end

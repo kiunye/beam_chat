@@ -27,21 +27,31 @@ defmodule BeamChat.Payments.ObanWorkers.MpesaPendingExpiry do
           where: t.status == "pending" and t.provider == "mpesa" and t.inserted_at < ^cutoff
       )
 
-    Enum.each(txns, &mark_failed(&1, "pending_expired_no_callback"))
+    expired = Enum.count(txns, &mark_failed_if_still_pending(&1))
 
-    if txns != [] do
-      Logger.info("mpesa_pending_expiry: expired #{length(txns)} pending transaction(s)")
+    if expired > 0 do
+      Logger.info("mpesa_pending_expiry: expired #{expired} pending transaction(s)")
     end
 
     :ok
   end
 
-  defp mark_failed(%WalletTransaction{} = txn, reason) do
-    txn
-    |> Ecto.Changeset.change(
-      status: "failed",
-      metadata: Map.merge(txn.metadata || %{}, %{"error" => reason})
-    )
-    |> Repo.update()
+  # Conditional update: a row is only flipped if it is STILL pending at write
+  # time, closing the TOCTOU where a webhook completing the row between the
+  # SELECT above and an unconditional UPDATE would be overwritten by a stale
+  # failed-write.
+  defp mark_failed_if_still_pending(%WalletTransaction{} = txn) do
+    metadata = Map.merge(txn.metadata || %{}, %{"error" => "pending_expired_no_callback"})
+
+    {count, nil} =
+      Repo.update_all(
+        from(t in WalletTransaction,
+          where: t.id == ^txn.id and t.status == "pending",
+          update: [set: [status: "failed", metadata: ^metadata]]
+        ),
+        []
+      )
+
+    count > 0
   end
 end

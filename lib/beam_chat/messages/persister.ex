@@ -69,6 +69,47 @@ defmodule BeamChat.Messages.Persister do
     {:ok, persisted}
   end
 
+  @doc """
+  Persists a single message, preloads its sender, and emits pipeline telemetry.
+  The caller broadcasts the returned row itself (room vs direct messages are
+  broadcast on different topics by schema-typed functions, so the broadcast
+  stays at the call site).
+
+  Accepts any message-shape map (`%{kind: :room | :direct, ...}`). Shape
+  validation matches `persist_ordered/1`'s list behavior: unrecognized shapes
+  return `{:error, {:persist_failed, :invalid_message_shape}}`, and
+  kind/destination consistency is enforced by `Validator` before this is ever
+  called.
+
+  Returns `{:ok, row}` or `{:error, {:persist_failed, reason}}` — the same
+  shape both `Rooms.send_message/3` and `Direct.send_message/3` expose.
+  """
+  @spec persist_and_preload(map()) ::
+          {:ok, persisted_message()} | {:error, {:persist_failed, term()}}
+  def persist_and_preload(data) when is_map(data) do
+    case persist_ordered([data]) do
+      [{:ok, row}] ->
+        row = Repo.preload(row, :sender)
+
+        :telemetry.execute(
+          [:beam_chat, :message_pipeline, :persisted],
+          %{count: 1, failed_count: 0},
+          %{}
+        )
+
+        {:ok, row}
+
+      [{:error, reason} | _] ->
+        :telemetry.execute(
+          [:beam_chat, :message_pipeline, :failed],
+          %{count: 1},
+          %{reason: inspect(reason)}
+        )
+
+        {:error, {:persist_failed, reason}}
+    end
+  end
+
   defp batch_insert_eligible?(messages) do
     Enum.all?(messages, fn
       %{kind: :room, room_id: _, user_id: _, content: _} -> true

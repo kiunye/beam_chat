@@ -273,7 +273,8 @@ defmodule BeamChat.Accounts do
   end
 
   defp delete_user_tokens(user_id) do
-    Repo.delete_all(from t in UserToken, where: t.user_id == ^user_id)
+    {count, _} = Repo.delete_all(from t in UserToken, where: t.user_id == ^user_id)
+    {:ok, count}
   end
 
   ## SSO JWT (shared secret)
