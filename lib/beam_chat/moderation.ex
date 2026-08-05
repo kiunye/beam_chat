@@ -5,9 +5,9 @@ defmodule BeamChat.Moderation do
   Handles moderation rules, rule engine integration, and moderation logging.
   """
 
-  alias BeamChat.MessagePipeline.RuleEngine
   alias BeamChat.Moderation.ModerationLog
   alias BeamChat.Moderation.ModerationRule
+  alias BeamChat.Moderation.RuleEngine
   alias BeamChat.Repo
   import Ecto.Query
 
@@ -100,9 +100,10 @@ defmodule BeamChat.Moderation do
   Triggers a refresh of the rule engine cache.
 
   This function is called by the Oban job to update the ETS cache
-  with the latest rules from the database.
+  owned by `BeamChat.Moderation.RuleEngine` with the latest rules from
+  the database.
   """
   def refresh_rule_cache do
-    RuleEngine.reload_rules_cache()
+    RuleEngine.refresh_cache()
   end
 end

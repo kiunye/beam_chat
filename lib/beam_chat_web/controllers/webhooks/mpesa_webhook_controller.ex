@@ -69,6 +69,34 @@ defmodule BeamChatWeb.Webhooks.MpesaWebhookController do
 
         :ok
 
+      %WalletTransaction{status: "failed", metadata: %{"error" => "pending_expired_no_callback"}} =
+          txn ->
+        wallet = Repo.get!(WalletSchema, txn.wallet_id)
+
+        if result_code == 0 do
+          # The 5-minute expiry cron marked this row failed locally before
+          # M-Pesa's callback arrived. The user DID pay — complete the credit
+          # instead of swallowing it.
+          _ =
+            Wallet.complete_provider_credit(
+              wallet.user_id,
+              txn.amount,
+              "mpesa",
+              checkout_id,
+              %{"source" => "webhook", "late_completion" => true}
+            )
+        else
+          # M-Pesa also reports failure; keep the row failed and record the code.
+          _ =
+            txn
+            |> Ecto.Changeset.change(
+              metadata: Map.merge(txn.metadata, %{"mpesa_result_code" => result_code})
+            )
+            |> Repo.update()
+        end
+
+        :ok
+
       _ ->
         :ok
     end

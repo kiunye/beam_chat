@@ -7,24 +7,6 @@ import Config
 # any compile-time configuration in here, as it won't be applied.
 # The block below contains prod specific runtime configuration.
 
-# Configure libcluster for Erlang clustering
-# In development, use local EPMD strategy
-# In production (Swarm), use DNS polling strategy
-cluster_topologies =
-  if Mix.env() in [:dev, :test] do
-    # Development: local node clustering via EPMD
-    [app: BeamChat.Application, strategy: Cluster.Strategy.Epmd]
-  else
-    # Production: DNS-based clustering for Swarm
-    [
-      app: BeamChat.Application,
-      strategy: Cluster.Strategy.DNSPoll,
-      config: [query: System.get_env("DNS_CLUSTER_QUERY", "tasks.beam_chat_app")]
-    ]
-  end
-
-config :libcluster, topologies: [cluster: cluster_topologies]
-
 # ## Using releases
 #
 # If you use `mix release`, you need to explicitly enable the server
@@ -139,6 +121,37 @@ if config_env() == :prod do
     end
 
   config :beam_chat, :sso_jwt_secrets, sso_jwt_secrets
+
+  # Oban queue concurrency limits (SECURITY_REVIEW.md P3 #27). Format:
+  # "QUEUE:CONCURRENCY[,QUEUE:CONCURRENCY,...]", e.g. "default:20,payments:10".
+  # Unset/empty falls back to the config.exs defaults. Queue names must already
+  # exist as atoms (`:default`, `:payments`, ...) — no atom creation from input.
+  oban_queues_env = System.get_env("OBAN_QUEUES")
+
+  if is_binary(oban_queues_env) and oban_queues_env != "" do
+    oban_queues =
+      oban_queues_env
+      |> String.split(",")
+      |> Enum.map(fn entry ->
+        case String.split(entry, ":") do
+          [name, concurrency] ->
+            try do
+              {String.to_existing_atom(String.trim(name)),
+               String.to_integer(String.trim(concurrency))}
+            rescue
+              ArgumentError ->
+                raise "invalid OBAN_QUEUES entry #{inspect(entry)}: expected a known " <>
+                        "queue name and an integer concurrency (e.g. \"default:10\")"
+            end
+
+          _ ->
+            raise "invalid OBAN_QUEUES entry #{inspect(entry)}: expected " <>
+                    "QUEUE:CONCURRENCY (e.g. \"default:10\")"
+        end
+      end)
+
+    config :beam_chat, Oban, queues: oban_queues
+  end
 
   # LiveKit: required in production so we never accidentally use dev keys.
   livekit_url =

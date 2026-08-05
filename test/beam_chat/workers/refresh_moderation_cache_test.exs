@@ -1,5 +1,5 @@
 defmodule BeamChat.Workers.RefreshModerationCacheTest do
-  use BeamChat.DataCase, async: true
+  use BeamChat.DataCase, async: false
 
   alias BeamChat.Workers.RefreshModerationCache
 

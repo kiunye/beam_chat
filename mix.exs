@@ -76,9 +76,6 @@ defmodule BeamChat.MixProject do
       {:assent, "~> 0.3"},
       {:joken, "~> 2.6"},
       {:oban, "~> 2.18"},
-      {:broadway, "~> 1.2.1"},
-      {:libcluster, "~> 3.5.0"},
-      {:horde, "~> 0.10.0"},
       {:livekit, "~> 0.1"},
       # Override livekit's transitive dep to fix Elixir 1.19 macro expansion
       # (https://hexdocs.pm/protobuf/0.15.0/changelog.html):

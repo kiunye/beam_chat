@@ -176,22 +176,14 @@ defmodule BeamChatWeb.ChatLive.Private do
     conv = socket.assigns.conversation
     user = socket.assigns.current_user
 
-    # `Direct.send_message/3` enqueues into the Broadway pipeline, returning
-    # `:ok` synchronously (or `{:error, :empty_content}` when the payload is
-    # whitespace). The persisted `DirectMessage` and its PubSub broadcast
-    # arrive asynchronously (≤5s batch_timeout) and are appended to the stream
-    # by `handle_info({:new_direct_message, ...}, ...)`.
-    #
-    # We intentionally do **not** pattern-match on `:ok` because
-    # `BeamChat.MessagePipeline.Producer.push_messages/2` has a deliberately
-    # looser spec than Broadway's published `[%Broadway.Message{}]`, which
-    # causes Dialyzer to narrow `Direct.send_message/3`'s inferred return type
-    # to `{:error, :empty_content}` only.
     case Direct.send_message(conv.id, user.id, content) do
+      {:error, {:blocked, reason}} ->
+        {:noreply, put_flash(socket, :error, "Message blocked: #{reason}")}
+
       {:error, _reason} ->
         {:noreply, put_flash(socket, :error, "Could not send that message.")}
 
-      _ ->
+      {:ok, _row} ->
         {:noreply, assign(socket, :message_form, to_form(%{"content" => ""}, as: :message))}
     end
   end
@@ -353,10 +345,9 @@ defmodule BeamChatWeb.ChatLive.Private do
 
   # Returns `:ok` if the user is under the per-minute thread-view limit,
   # `{:error, :rate_limited}` otherwise. We use an ETS table keyed by user
-  # id so the limit is cluster-shared when running behind Horde (Horde
-  # does not auto-replicate ETS, so each node enforces independently —
-  # acceptable because we are bounding *attempts*, not aggregating
-  # *quota*, and a small per-node over-count is harmless).
+  # id to keep the counter out of the database — acceptable because we are
+  # bounding *attempts*, not aggregating *quota*, and a small over-count
+  # is harmless.
   @table :beam_chat_dm_thread_rate
 
   defp thread_view_allowed?(%User{id: uid}) do

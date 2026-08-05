@@ -172,6 +172,30 @@ defmodule BeamChat.Accounts do
     end
   end
 
+  ## Last seen
+
+  @last_seen_stale_after 5 * 60
+
+  @doc """
+  Best-effort touch of `users.last_seen_at`, throttled so a user is written at
+  most once per 5-minute window (SECURITY_REVIEW.md P3 #22).
+
+  Uses a guarded `update_all` — no read-modify-write, safe under concurrency.
+  Returns `{count, nil}` of updated rows; callers should not block on this.
+  """
+  @spec touch_last_seen(String.t()) :: {non_neg_integer(), nil}
+  def touch_last_seen(user_id) when is_binary(user_id) do
+    cutoff = DateTime.add(DateTime.utc_now(), -@last_seen_stale_after, :second)
+
+    Repo.update_all(
+      from(u in User,
+        where: u.id == ^user_id and (is_nil(u.last_seen_at) or u.last_seen_at < ^cutoff),
+        update: [set: [last_seen_at: ^DateTime.utc_now()]]
+      ),
+      []
+    )
+  end
+
   @doc """
   Returns true if `username` is on the configured reserved-username list.
 
@@ -249,7 +273,8 @@ defmodule BeamChat.Accounts do
   end
 
   defp delete_user_tokens(user_id) do
-    Repo.delete_all(from t in UserToken, where: t.user_id == ^user_id)
+    {count, _} = Repo.delete_all(from t in UserToken, where: t.user_id == ^user_id)
+    {:ok, count}
   end
 
   ## SSO JWT (shared secret)

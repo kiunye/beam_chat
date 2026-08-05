@@ -195,4 +195,70 @@ defmodule BeamChat.WalletTest do
       assert Wallet.expire_subscriptions() == 0
     end
   end
+
+  describe "list_transactions/3" do
+    test "pages newest first with a stable id tie-break" do
+      user = user_fixture()
+      wallet = wallet_fixture(user)
+
+      t1 = wallet_transaction_fixture(wallet, %{amount: "1.00"})
+      t2 = wallet_transaction_fixture(wallet, %{amount: "2.00"})
+      t3 = wallet_transaction_fixture(wallet, %{amount: "3.00"})
+
+      {page1, more1} = Wallet.list_transactions(user.id, 2, 0)
+      {page2, more2} = Wallet.list_transactions(user.id, 2, 2)
+
+      assert [t3.id, t2.id] == Enum.map(page1, & &1.id)
+      assert more1 == true
+      assert [t1.id] == Enum.map(page2, & &1.id)
+      assert more2 == false
+    end
+
+    test "returns has_more false when the page exactly covers all rows" do
+      user = user_fixture()
+      wallet = wallet_fixture(user)
+
+      t1 = wallet_transaction_fixture(wallet, %{amount: "1.00"})
+      t2 = wallet_transaction_fixture(wallet, %{amount: "2.00"})
+
+      {txns, more} = Wallet.list_transactions(user.id, 2, 0)
+
+      assert [t2.id, t1.id] == Enum.map(txns, & &1.id)
+      assert more == false
+    end
+
+    test "returns an empty page with no more flag for a wallet without transactions" do
+      user = user_fixture()
+      wallet = wallet_fixture(user)
+
+      assert {[], false} = Wallet.list_transactions(user.id, 20, 0)
+      assert {[], false} = Wallet.list_transactions(user.id, 20, 1)
+    end
+
+    test "does not mix transactions between wallets" do
+      user_a = user_fixture()
+      user_b = user_fixture()
+      wallet_a = wallet_fixture(user_a)
+      wallet_b = wallet_fixture(user_b)
+
+      ta = wallet_transaction_fixture(wallet_a, %{amount: "1.00"})
+      tb = wallet_transaction_fixture(wallet_b, %{amount: "2.00"})
+
+      {txns, false} = Wallet.list_transactions(user_a.id, 20, 0)
+      assert Enum.map(txns, & &1.id) == [ta.id]
+      refute Enum.any?(txns, &(&1.id == tb.id))
+    end
+
+    test "list_recent_transactions/2 keeps working as a non-paged wrapper" do
+      user = user_fixture()
+      wallet = wallet_fixture(user)
+      wallet_transaction_fixture(wallet, %{amount: "1.00"})
+      wallet_transaction_fixture(wallet, %{amount: "2.00"})
+
+      assert [2, 1] ==
+               Wallet.list_recent_transactions(user.id, 2)
+               |> Enum.map(& &1.amount)
+               |> Enum.map(&Decimal.to_integer/1)
+    end
+  end
 end

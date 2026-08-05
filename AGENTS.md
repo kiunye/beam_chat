@@ -296,7 +296,7 @@ mounted() {
   ```
 
 - **Never** use `@apply` in raw CSS.
-- **Never** use daisyUI — always write your own Tailwind-based components.
+- daisyUI is the established component vocabulary in this codebase (`btn`, `badge`, `card`, `rounded-box`, `input-bordered`, `base-100`, etc.) — use these classes consistently. Do not hand-roll a parallel Tailwind-only component where a daisyUI class exists, and do not introduce a second CSS framework.
 - Only `app.js` and `app.css` bundles are supported out of the box:
   - Never reference external vendor scripts/styles via `src` or `href` in layouts.
   - Import all vendor dependencies into `app.js` and `app.css`.

@@ -7,8 +7,9 @@ defmodule BeamChat.Workers.RefreshModerationCache do
 
   @impl Oban.Worker
   def perform(_job) do
-    # reload_rules_cache/0 re-reads the moderation_rules table into the
-    # named ETS cache (creating the owner process if needed) and returns :ok.
+    # Moderation.refresh_rule_cache/0 re-reads the moderation_rules table
+    # into the named ETS cache owned by the supervised
+    # BeamChat.Moderation.RuleEngine GenServer and returns :ok.
     # See SECURITY_REVIEW.md P2 #21.
     Moderation.refresh_rule_cache()
   end

@@ -17,8 +17,8 @@ defmodule BeamChat.Payments.ObanWorkers.MpesaStkWorkerTest do
       assert String.contains?(ref, "-") == false
       # 18 hex chars.
       assert String.length(ref) == 18
-      # Matches the first 18 hex digits of the UUID (concatenated).
-      assert ref == "aaaaaaaa" <> "bbbb" <> "cccc" <> "dd"
+      # Matches the last 18 hex digits of the UUID (concatenated).
+      assert ref == "ccddddeeeeeeeeeeee"
     end
 
     test "is unique per transaction UUID at high insertion rate" do

@@ -11,17 +11,22 @@ defmodule BeamChatWeb.WalletLive.Index do
   # `:dev_wallet_credit_build` is false outside dev, so a stray prod config
   # override can never surface the staff credit form.
 
+  # Page size for the recent-activity list (SECURITY_REVIEW.md P3 #23).
+  @txn_page_size 20
+
   @impl true
   def mount(_params, _session, socket) do
     user = socket.assigns.current_user
 
     {:ok, wallet} = Wallet.ensure_wallet(user.id)
-    txns = Wallet.list_recent_transactions(user.id, 40)
+    {txns, has_more} = Wallet.list_transactions(user.id, @txn_page_size, 0)
 
     {:ok,
      socket
      |> assign(:page_title, "Wallet")
      |> assign(:wallet, wallet)
+     |> assign(:txn_page, 1)
+     |> assign(:txn_has_more, has_more)
      |> assign(:paystack_form, to_form(%{"amount" => ""}, as: :paystack))
      |> assign(:mpesa_form, to_form(%{"amount" => "", "phone" => ""}, as: :mpesa))
      |> assign(:staff_form, to_form(%{"email" => "", "amount" => "", "note" => ""}, as: :staff))
@@ -53,6 +58,20 @@ defmodule BeamChatWeb.WalletLive.Index do
 
   def handle_event("refresh_wallet", _, socket) do
     {:noreply, refresh_wallet_view(socket)}
+  end
+
+  def handle_event("load_more", _, socket) do
+    user = socket.assigns.current_user
+    page = socket.assigns.txn_page
+
+    {txns, has_more} =
+      Wallet.list_transactions(user.id, @txn_page_size, page * @txn_page_size)
+
+    {:noreply,
+     socket
+     |> assign(:txn_page, page + 1)
+     |> assign(:txn_has_more, has_more)
+     |> stream(:transactions, txns)}
   end
 
   defp paystack_topup(socket, raw) do
@@ -207,11 +226,13 @@ defmodule BeamChatWeb.WalletLive.Index do
     case Wallet.manual_credit(actor, target.id, amount, note) do
       {:ok, _, _} ->
         {:ok, my_wallet} = Wallet.ensure_wallet(actor.id)
-        txns = Wallet.list_recent_transactions(actor.id, 40)
+        {txns, has_more} = Wallet.list_transactions(actor.id, @txn_page_size, 0)
 
         socket
         |> put_flash(:info, "Credit applied to #{target.username}.")
         |> assign(:wallet, my_wallet)
+        |> assign(:txn_page, 1)
+        |> assign(:txn_has_more, has_more)
         |> assign(
           :staff_form,
           to_form(%{"email" => "", "amount" => "", "note" => ""}, as: :staff)
@@ -233,10 +254,12 @@ defmodule BeamChatWeb.WalletLive.Index do
   defp refresh_wallet_view(socket) do
     user = socket.assigns.current_user
     {:ok, wallet} = Wallet.ensure_wallet(user.id)
-    txns = Wallet.list_recent_transactions(user.id, 40)
+    {txns, has_more} = Wallet.list_transactions(user.id, @txn_page_size, 0)
 
     socket
     |> assign(:wallet, wallet)
+    |> assign(:txn_page, 1)
+    |> assign(:txn_has_more, has_more)
     |> stream(:transactions, txns, reset: true, dom_id: &("txn-" <> &1.id))
   end
 
@@ -362,6 +385,17 @@ defmodule BeamChatWeb.WalletLive.Index do
             </div>
           </div>
         </div>
+
+        <%= if @txn_has_more do %>
+          <button
+            id="load-more-txns"
+            type="button"
+            phx-click="load_more"
+            class="mt-4 w-full rounded-btn border border-base-300 bg-base-200 px-4 py-2 text-sm font-medium text-base-content transition hover:border-base-content/40 hover:bg-base-300"
+          >
+            Load more
+          </button>
+        <% end %>
       </section>
     </div>
     """
