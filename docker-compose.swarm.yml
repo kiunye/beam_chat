@@ -1,28 +1,46 @@
 # Docker Swarm deployment stack for BEAM Chat (production).
 #
 # Usage:
-#   docker stack deploy -c docker-compose.swarm.yml beam_chat
+#   docker stack deploy --env-file .env -c docker-compose.swarm.yml beam_chat
 #
 # Required environment variables (inject at deploy time via
 # `--env-file .env` / exported CI variables — `docker stack deploy` does NOT
 # auto-read a `.env` file; no literal values are allowed in this file):
-#   DATABASE_URL, SECRET_KEY_BASE, PHX_HOST, RELEASE_COOKIE, RELEASE_NODE,
-#   LIVEKIT_API_KEY, LIVEKIT_API_SECRET, LIVEKIT_URL,
+#   DATABASE_URL, SECRET_KEY_BASE, PHX_HOST, RELEASE_COOKIE, SSO_JWT_SECRET,
+#   LIVEKIT_HOST, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, LIVEKIT_URL,
 #   MPESA_CONSUMER_KEY, MPESA_CONSUMER_SECRET, PAYSTACK_SECRET_KEY,
 #   DB_USER, DB_PASSWORD, ACME_EMAIL, CI_PROJECT_PATH, IMAGE_TAG
+#
+# Deployment (CI, see .gitlab-ci.yml): the pipeline scp's this file and
+# livekit_config.yaml to ~/beam_chat/ on the swarm host, then runs
+#   docker stack deploy --env-file .env --compose-file docker-compose.swarm.yml \
+#     --with-registry-auth beam_chat_staging   # or beam_chat_prod
+# The .env file (containing all secrets above) must be pre-provisioned on
+# the host as ~/beam_chat/.env. Shell-exported variables (IMAGE_TAG,
+# PHX_HOST, CI_PROJECT_PATH) take precedence over .env for interpolation.
 #
 # Swarm node labels that MUST be set on the manager nodes before deploy:
 #   - livekit node:  node.labels.livekit == true
 #   - postgres node: node.labels.db == true
 #   (e.g. docker node update --label-add livekit=true <node-id>)
 #
-# Follow-on milestone (Dockerfile + rel/env.sh.eex + GitLab CI) is out of
-# scope for this file — the app image
-# registry.gitlab.com/${CI_PROJECT_PATH}:${IMAGE_TAG} is expected to be built
-# and pushed by that pipeline.
+# TLS topology — Traefik terminates TLS; the app and LiveKit signaling both
+# get Let's Encrypt certificates via the ACME HTTP-01 challenge on port 80:
+#   app:   https://${PHX_HOST}        → Traefik :443  → app:4000
+#   video: wss://${LIVEKIT_HOST}      → Traefik :7880 → livekit:7880 (plaintext)
+#   media: ICE/UDP (7882/udp) + RTC TCP (7881/tcp) published host-mode on the
+#          livekit node — direct media path, NOT via Traefik.
+# ACME uses HTTP-01 instead of TLS-ALPN-01: TLS-ALPN-01 can only be
+# validated on port 443, but LiveKit signaling terminates at Traefik on
+# :7880. With HTTP-01, certs for both domains are validated via port 80.
+# DNS for ${PHX_HOST} and ${LIVEKIT_HOST} must point at the swarm managers,
+# and port 80 must be reachable from the internet for challenge validation.
 #
 # Design notes:
 #   - No Redis service: Oban persists jobs in Postgres (plan drops Redis).
+#   - The per-container Erlang node name is derived at boot by
+#     rel/env.sh.eex (RELEASE_NODE="beam_chat@${HOSTNAME}") — replicas must
+#     not share a fixed RELEASE_NODE, so none is passed here.
 #   - LiveKit's UDP media port is published with mode: host (§11.2 mitigation
 #     for Swarm's unreliable UDP routing mesh).
 #   - Traefik routing labels live under deploy.labels because in Swarm mode
@@ -43,7 +61,7 @@ configs:
 
 services:
   traefik:
-    image: traefik:v3.1
+    image: traefik:v3.1 # TODO(deploy): pin to a specific v3.1.x patch once the current version is confirmed, matching the livekit pin stance
     command:
       - "--providers.swarm=true"
       - "--providers.swarm.exposedByDefault=false"
@@ -51,12 +69,20 @@ services:
       - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
       - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
       - "--entrypoints.websecure.address=:443"
-      - "--certificatesresolvers.le.acme.tlschallenge=true"
+      - "--entrypoints.livekit-tcp.address=:7880"
+      # HTTP-01 challenge on the web entrypoint (port 80). TLS-ALPN-01 is
+      # NOT usable here: it is always validated on port 443, but LiveKit
+      # signaling TLS terminates on :7880. Traefik serves the HTTP-01
+      # challenge before the web→websecure redirect (official docs:
+      # "Redirection is fully compatible with the HTTP-01 challenge").
+      - "--certificatesresolvers.le.acme.httpchallenge=true"
+      - "--certificatesresolvers.le.acme.httpchallenge.entrypoint=web"
       - "--certificatesresolvers.le.acme.email=${ACME_EMAIL}"
       - "--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json"
     ports:
       - "80:80"
       - "443:443"
+      - "7880:7880"   # LiveKit signaling (wss) — routed by the TCP router below
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - traefik_certs:/letsencrypt
@@ -75,13 +101,18 @@ services:
       SECRET_KEY_BASE: ${SECRET_KEY_BASE}
       PHX_HOST: ${PHX_HOST}
       RELEASE_COOKIE: ${RELEASE_COOKIE}
+      # Required by config/runtime.exs (raises without it). Optional rotation
+      # list SSO_JWT_SECRETS is read but not required — unset is fine.
+      SSO_JWT_SECRET: ${SSO_JWT_SECRET}
       # The per-container Erlang node name is derived at boot by
-      # rel/env.sh.eex in the follow-on milestone; swarm replicas must not
-      # share a fixed RELEASE_NODE value.
-      RELEASE_NODE: ${RELEASE_NODE}
+      # rel/env.sh.eex (RELEASE_NODE="beam_chat@${HOSTNAME}") — a fixed
+      # RELEASE_NODE here would collide across the 3 replicas.
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
-      LIVEKIT_URL: ${LIVEKIT_URL}   # public WSS URL for clients, e.g. wss://video.example.com
+      # Public WSS URL for clients — clients must hit the Traefik TCP
+      # entrypoint port: e.g. wss://${LIVEKIT_HOST}:7880 (:443 has no TCP
+      # router for the LiveKit host).
+      LIVEKIT_URL: ${LIVEKIT_URL}
       MPESA_CONSUMER_KEY: ${MPESA_CONSUMER_KEY}
       MPESA_CONSUMER_SECRET: ${MPESA_CONSUMER_SECRET}
       PAYSTACK_SECRET_KEY: ${PAYSTACK_SECRET_KEY}
@@ -118,7 +149,7 @@ services:
         - "traefik.http.services.app.loadbalancer.sticky.cookie.secure=true"
 
   livekit:
-    image: livekit/livekit-server:latest
+    image: livekit/livekit-server:v1.13.5   # pinned — current stable (2026-07-31); do not float :latest
     command: --config /etc/livekit/config.yaml
     environment:
       # Compose interpolates ${LIVEKIT_API_KEY} / ${LIVEKIT_API_SECRET} from
@@ -130,9 +161,9 @@ services:
       - source: livekit_config
         target: /etc/livekit/config.yaml
     ports:
-      - target: 7880
-        published: 7880
-        protocol: tcp
+      # Signaling (7880/tcp) is NOT published here anymore — Traefik fronts it
+      # via the TCP router below (wss://${LIVEKIT_HOST} → Traefik :7880 →
+      # livekit:7880 plaintext). Media stays direct:
       - target: 7881
         published: 7881
         protocol: tcp
@@ -147,10 +178,20 @@ services:
       placement:
         constraints:
           - node.labels.livekit == true
-      # The firewall on the node carrying the livekit label must open
-      # 7880/tcp, 7881/tcp and 7882/udp. rtc.use_external_ip: true (see
-      # livekit_config.yaml) requires that node's public IP / NAT forwarding —
-      # LiveKit detects its external IP via STUN at startup.
+      labels:
+        # TCP router terminating TLS for LiveKit signaling. HostSNI matches
+        # the SNI from the client's wss://${LIVEKIT_HOST} connection; the
+        # certificate comes from the le resolver (HTTP-01).
+        - "traefik.enable=true"
+        - "traefik.tcp.routers.livekit.rule=HostSNI(`${LIVEKIT_HOST}`)"
+        - "traefik.tcp.routers.livekit.entrypoints=livekit-tcp"
+        - "traefik.tcp.routers.livekit.tls.certresolver=le"
+        - "traefik.tcp.services.livekit.loadbalancer.server.port=7880"
+      # The swarm manager running Traefik must open 7880/tcp (signaling);
+      # the node carrying the livekit label must open 7881/tcp and 7882/udp
+      # (media). rtc.use_external_ip: true (see livekit_config.yaml) requires
+      # that node's public IP / NAT forwarding — LiveKit detects its external
+      # IP via STUN at startup.
 
   postgres:
     image: postgres:16-alpine

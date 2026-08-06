@@ -1,0 +1,40 @@
+# Build context exclusions for the Dockerfile in this directory.
+#
+# Everything here is either (a) a build output regenerated inside the image,
+# (b) tooling/CI/dev files the image never needs, or (c) secrets.
+
+# Build outputs (regenerated inside the builder)
+_build/
+deps/
+assets/node_modules/
+priv/static/assets/
+priv/static/cache_manifest.json
+priv/plts/
+cover/
+
+# VCS / editor / tooling
+.git/
+.elixir_ls/
+.cursor/
+docs/
+doc/
+.credo.exs
+.dialyzer_ignore.exs
+.sobelow-conf
+.formatter.exs
+.impeccable.md
+.DS_Store
+
+# Not needed at build (elixirc_paths for prod is ["lib"]; mix release does
+# not compile tests)
+test/
+
+# Dev-only scripts / local junk
+scripts/
+erl_crash.dump
+
+# Docs (image needs none) — also excludes *.md under any subdir
+*.md
+
+# Secrets / local env — never enter the build context
+.env*

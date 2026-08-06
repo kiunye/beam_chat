@@ -37,7 +37,9 @@ beam_chat-*.tar
 # In case you use Node.js/npm, you want to ignore these.
 npm-debug.log
 /assets/node_modules/
-/assets/package-lock.json
+# NOTE: assets/package-lock.json is intentionally TRACKED — the Docker build
+# (Dockerfile: npm ci --omit=dev) and GitLab CI require it for reproducible
+# installs of the prod npm deps (livekit-client).
 
 # Local environment overrides (see .env.example)
 .env

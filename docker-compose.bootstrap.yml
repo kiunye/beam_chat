@@ -1,0 +1,8 @@
+# Stack override used ONLY for the first deploy to a fresh environment
+# (no schema yet). Deploys the full stack but pins the app to 0 replicas
+# so it cannot crash-loop against the missing moderation_rules table; CI
+# then runs migrations via a one-shot container and scales the app up.
+services:
+  app:
+    deploy:
+      replicas: 0
