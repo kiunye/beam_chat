@@ -58,7 +58,7 @@ wraps the third-party `Livekit.AccessToken` module and:
 - scopes each token to one room (`Grants.join_room(room_id)`)
 - grants `roomJoin: true`, `canPublish: true`, `canSubscribe: true`
 - uses identity `"user-" <> user_id` (no PII in the token)
-- expires the token in 1 hour (re-mint on rejoin)
+- expires the token in 10 minutes (re-mint on rejoin)
 - is **never** logged; we only return the JWT via `push_event/3`
 
 Banned users and viewers without room access get a `{:error, :no_access}`
@@ -94,7 +94,7 @@ hook disconnects cleanly on `destroyed()` (page navigation, log-out).
   come from your secrets store (Vault, GitLab CI masked variables,
   Docker Swarm secrets). The `.env.example` file is a template only;
   never commit real secrets.
-- **Token lifetime** — keep TTL short (1h default) so a leaked token
+- **Token lifetime** — keep TTL short (10-min default) so a leaked token
   expires quickly. Users re-mint transparently on disconnect/rejoin.
 
 ### Tests

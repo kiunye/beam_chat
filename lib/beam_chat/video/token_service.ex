@@ -6,7 +6,7 @@ defmodule BeamChat.Video.TokenService do
   signing, or upgrade the SDK) we change one file.
 
   Defaults are deliberately conservative:
-    * 1 hour TTL
+    * 10 minute TTL
     * `room_join: true`, `can_publish: true`, `can_subscribe: true`
     * Room name = Ecto UUID of the chat room (scoped; user cannot join
       other rooms with the same token)
