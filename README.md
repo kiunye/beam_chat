@@ -83,7 +83,7 @@ hook disconnects cleanly on `destroyed()` (page navigation, log-out).
    camera/mic when prompted. You should see both participants' video
    tiles.
 
-### Production notes (PRD §11.2)
+### Production notes
 
 - **UDP networking** — LiveKit media flows over UDP. On Docker Swarm the
   `livekit` service must use `host` publishing for ports 7881/7882 (or

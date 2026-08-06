@@ -71,4 +71,4 @@ operational need:
 
 - Un-partitioning the `messages` table (destructive migration).
 - Removing the `rate_limit` rule-type no-op and unused content-type variants.
-- Committing the SECURITY_REVIEW.md / PRD documents referenced by code comments.
+- Committing the security-review and spec documents referenced by code comments.
