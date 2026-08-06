@@ -1,9 +1,9 @@
 # Local development services (matches PRD Postgres 16 baseline + LiveKit dev server).
-# Run from repo root: docker compose up -d
-# Then: cd beam_chat && mix setup
+# Run from this directory: docker compose up -d
+# Then: mix setup
 #
 # LiveKit runs with its `--dev` defaults (api_key=devkey, api_secret=secret),
-# which are mirrored in beam_chat/.env.example so the server can issue tokens.
+# which are mirrored in .env.example so the server can issue tokens.
 
 services:
   postgres:
