@@ -23,7 +23,7 @@ import "phoenix_html"
 import {Socket} from "phoenix"
 import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/beam_chat"
-import topbar from "../vendor/topbar"
+import topbar from "../vendor/topbar.cjs"
 
 import LiveKitRoom from "./hooks/live_kit_room"
 
