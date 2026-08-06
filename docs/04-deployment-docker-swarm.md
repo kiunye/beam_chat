@@ -27,7 +27,7 @@ This document is the operational contract — read it alongside
   reachable from the internet**.
 - **LiveKit media** (ICE/UDP 7882 + RTC TCP 7881) is published with
   `mode: host` on the LiveKit node — Swarm's routing mesh is unreliable
-  for UDP (PRD §11.2). `rtc.use_external_ip: true` (see
+  for UDP. `rtc.use_external_ip: true` (see
   `livekit_config.yaml`) requires that node to have a public IP / NAT
   forwarding; LiveKit detects its external IP via STUN at startup.
 - **No Redis**: Oban persists jobs in PostgreSQL. Pub/sub clustering uses
