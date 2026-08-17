@@ -3,6 +3,8 @@ defmodule BeamChat.Repo do
     otp_app: :beam_chat,
     adapter: Ecto.Adapters.Postgres
 
+  alias Ecto.Adapters.SQL
+
   @doc """
   Run `fun` inside a transaction with the tenant/user session GUCs set via
   `SET LOCAL`, so PostgreSQL Row Level Security sees the correct
@@ -18,7 +20,7 @@ defmodule BeamChat.Repo do
     case __MODULE__.transaction(fn ->
            # `set_config(..., true)` sets the GUC for the duration of the transaction
            # (equivalent to SET LOCAL) and — unlike SET LOCAL — accepts bind params.
-           Ecto.Adapters.SQL.query!(
+           SQL.query!(
              __MODULE__,
              "SELECT set_config('app.current_tenant_id', $1, true)",
              [
@@ -26,7 +28,7 @@ defmodule BeamChat.Repo do
              ]
            )
 
-           Ecto.Adapters.SQL.query!(
+           SQL.query!(
              __MODULE__,
              "SELECT set_config('app.current_user_id', $1, true)",
              [

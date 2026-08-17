@@ -221,21 +221,20 @@ defmodule BeamChatWeb.RoomTreeLive do
   # `app.current_tenant_id` GUC; non-admins use the visibility-scoped policy.
   defp load_tree(socket) do
     case socket.assigns.tenant do
-      nil ->
-        []
+      nil -> []
+      tenant -> load_tenant_tree(socket, tenant)
+    end
+  end
 
-      tenant ->
-        user = socket.assigns.current_user
-
-        if socket.assigns.is_admin do
-          Repo.with_tenant(tenant.id, user.id, fn ->
-            roots = Rooms.list_child_rooms(nil)
-            Enum.map(roots, &build_node/1)
-          end)
-        else
-          visible = AccessPolicy.list_visible_rooms(user, tenant)
-          organize_flat(visible)
-        end
+  defp load_tenant_tree(socket, tenant) do
+    if socket.assigns.is_admin do
+      Repo.with_tenant(tenant.id, socket.assigns.current_user.id, fn ->
+        roots = Rooms.list_child_rooms(nil)
+        Enum.map(roots, &build_node/1)
+      end)
+    else
+      visible = AccessPolicy.list_visible_rooms(socket.assigns.current_user, tenant)
+      organize_flat(visible)
     end
   end
 

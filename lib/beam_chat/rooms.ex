@@ -443,20 +443,24 @@ defmodule BeamChat.Rooms do
       if is_nil(tenant_id) do
         {:error, :missing_tenant}
       else
-        with {:ok, room} <-
-               %Room{} |> Room.changeset(attrs) |> Repo.insert(),
-             {:ok, _member} <-
-               %RoomMember{}
-               |> RoomMember.changeset(%{
-                 room_id: room.id,
-                 user_id: room.owner_id,
-                 tenant_id: room.tenant_id,
-                 role: "owner"
-               })
-               |> Repo.insert() do
-          {:ok, room}
-        end
+        insert_room_with_owner(attrs)
       end
     end)
+  end
+
+  defp insert_room_with_owner(attrs) do
+    with {:ok, room} <-
+           %Room{} |> Room.changeset(attrs) |> Repo.insert(),
+         {:ok, _member} <-
+           %RoomMember{}
+           |> RoomMember.changeset(%{
+             room_id: room.id,
+             user_id: room.owner_id,
+             tenant_id: room.tenant_id,
+             role: "owner"
+           })
+           |> Repo.insert() do
+      {:ok, room}
+    end
   end
 end
