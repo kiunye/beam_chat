@@ -7,9 +7,14 @@ defmodule BeamChat.Rooms.AccessPolicy do
   from their wallet once funded.
   """
 
+  import Ecto.Query
+
   alias BeamChat.Accounts.User
+  alias BeamChat.Repo
   alias BeamChat.Rooms
   alias BeamChat.Rooms.Room
+  alias BeamChat.Rooms.RoomMember
+  alias BeamChat.Tenants
 
   @type outcome ::
           :ok
@@ -63,6 +68,66 @@ defmodule BeamChat.Rooms.AccessPolicy do
 
   defp paid_subscription_outcome(%{active_subscription: true}), do: :ok
   defp paid_subscription_outcome(_flags), do: {:blocked, :upgrade_required}
+
+  # ---------------------------------------------------------------------------
+  # Role-based visibility (CATEGORY_REDESIGN.md §4.5 / D5)
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  List the rooms visible to `user` within `tenant`.
+
+  - Tenant admins see the entire tenant tree (`Room` rows scoped by
+    `tenant_id`).
+  - Everyone else sees only the rooms they hold an explicit `room_members` grant
+    for (no automatic down-tree cascade).
+
+  Both branches run inside `Repo.with_tenant/3` so PostgreSQL RLS applies.
+  """
+  @spec list_visible_rooms(struct() | Ecto.UUID.t(), struct() | Ecto.UUID.t()) :: [Room.t()]
+  def list_visible_rooms(user, tenant) do
+    tenant_id = id_of(tenant)
+    user_id = id_of(user)
+
+    if Tenants.admin?(tenant, user) do
+      Repo.with_tenant(tenant_id, user_id, fn ->
+        from(r in Room, where: r.tenant_id == ^tenant_id, order_by: [asc: r.name])
+        |> Repo.all()
+      end)
+    else
+      Repo.with_tenant(tenant_id, user_id, fn ->
+        from(r in Room,
+          join: rm in RoomMember,
+          on: rm.room_id == r.id,
+          where: r.tenant_id == ^tenant_id and rm.user_id == ^user_id,
+          distinct: true,
+          order_by: [asc: r.name]
+        )
+        |> Repo.all()
+      end)
+    end
+  end
+
+  @doc """
+  Whether `user` may view `room`. True when the user is an admin of
+  `room.tenant_id` or holds a `room_members` row for that room. Wrapped in
+  `Repo.with_tenant/3` so RLS applies.
+  """
+  @spec can_view?(struct() | Ecto.UUID.t(), Room.t()) :: boolean()
+  def can_view?(user, %Room{tenant_id: tenant_id} = room) do
+    user_id = id_of(user)
+
+    Repo.with_tenant(tenant_id, user_id, fn ->
+      Tenants.admin?(tenant_id, user_id) or
+        Repo.exists?(
+          from(rm in RoomMember,
+            where: rm.room_id == ^room.id and rm.user_id == ^user_id
+          )
+        )
+    end)
+  end
+
+  defp id_of(%{id: id}), do: id
+  defp id_of(id) when is_binary(id), do: id
 
   @doc """
   Whether `user` may join the LiveKit audio/video session for `room`.

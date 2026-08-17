@@ -9,6 +9,7 @@ defmodule BeamChatWeb.Router do
     plug :put_layout, html: {BeamChatWeb.Layouts, :app}
     plug :protect_from_forgery
     plug BeamChatWeb.Plugs.FetchCurrentUser
+    plug BeamChatWeb.Plug.TenantContext
 
     plug :put_secure_browser_headers, %{"content-security-policy" => BeamChatWeb.csp_header()}
   end
@@ -33,13 +34,17 @@ defmodule BeamChatWeb.Router do
     get "/", PageController, :home
 
     live_session :authenticated,
-      on_mount: [{BeamChatWeb.UserAuthLive, :require_authenticated}],
+      on_mount: [
+        {BeamChatWeb.UserAuthLive, :require_authenticated},
+        {BeamChatWeb.TenantContext, :default}
+      ],
       layout: {BeamChatWeb.Layouts, :app} do
       live "/rooms", RoomLive.Index, :index
       live "/rooms/:slug", RoomLive.Show, :show
       live "/messages", ChatLive.Private, :index
       live "/messages/:id", ChatLive.Private, :show
       live "/wallet", WalletLive.Index, :index
+      live "/admin/rooms", RoomTreeLive, :index
     end
 
     get "/payments/paystack/return", PaystackReturnController, :show

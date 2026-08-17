@@ -22,31 +22,49 @@ defmodule BeamChat.Rooms.Room do
     belongs_to(:category, BeamChat.Rooms.RoomCategory, foreign_key: :category_id)
     belongs_to(:owner, BeamChat.Accounts.User, foreign_key: :owner_id)
 
+    belongs_to(:tenant, BeamChat.Tenants.Tenant, foreign_key: :tenant_id)
+    belongs_to(:parent, __MODULE__, foreign_key: :parent_id)
+    has_many(:children, __MODULE__, foreign_key: :parent_id)
+
     timestamps(type: :utc_datetime)
   end
 
   def changeset(room, attrs) do
-    room
-    |> cast(attrs, [
-      :name,
-      :slug,
-      :description,
-      :category_id,
-      :owner_id,
-      :type,
-      :password_hash,
-      :is_paid,
-      :price,
-      :currency,
-      :max_members,
-      :age_restriction,
-      :metadata,
-      :is_archived
-    ])
-    |> validate_required([:name, :slug, :owner_id])
-    |> validate_inclusion(:type, ~w(public private secret paid))
-    |> unique_constraint(:slug)
-    |> foreign_key_constraint(:category_id)
-    |> foreign_key_constraint(:owner_id)
+    room =
+      room
+      |> cast(attrs, [
+        :name,
+        :slug,
+        :description,
+        :category_id,
+        :owner_id,
+        :tenant_id,
+        :parent_id,
+        :type,
+        :password_hash,
+        :is_paid,
+        :price,
+        :currency,
+        :max_members,
+        :age_restriction,
+        :metadata,
+        :is_archived
+      ])
+      |> validate_required([:name, :slug, :owner_id])
+      |> validate_inclusion(:type, ~w(public private secret paid))
+      |> unique_constraint(:slug)
+      |> foreign_key_constraint(:category_id)
+      |> foreign_key_constraint(:owner_id)
+      |> foreign_key_constraint(:tenant_id)
+      |> foreign_key_constraint(:parent_id)
+
+    parent_id = get_field(room, :parent_id)
+    id = get_field(room, :id)
+
+    if not is_nil(parent_id) and parent_id == id do
+      add_error(room, :parent_id, "cannot be its own parent")
+    else
+      room
+    end
   end
 end

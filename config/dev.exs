@@ -11,14 +11,18 @@ if database_url = System.get_env("DATABASE_URL") do
     pool_size: 10
 else
   config :beam_chat, BeamChat.Repo,
-    username: "postgres",
-    password: "postgres",
+    username: System.get_env("BEAMCHAT_DB_USERNAME", "beamchat_app"),
+    password: System.get_env("BEAMCHAT_DB_PASSWORD", "beamchat_app"),
     hostname: "localhost",
     database: "beam_chat_dev",
     stacktrace: true,
     show_sensitive_data_on_connection_error: true,
     pool_size: 10
 end
+
+# SECURITY: the app must NOT connect as the Postgres superuser, or PostgreSQL
+# Row Level Security (see CATEGORY_REDESIGN.md §9) is silently bypassed. Create
+# the non-superuser role with: `mix run priv/repo/setup_app_role.exs`.
 
 # For development, we disable any cache and enable
 # debugging and code reloading.
