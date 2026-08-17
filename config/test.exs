@@ -6,12 +6,15 @@ import Config
 # to provide built-in test partitioning in CI environment.
 # Run `mix help test` for more information.
 config :beam_chat, BeamChat.Repo,
-  username: "postgres",
-  password: "postgres",
+  username: System.get_env("BEAMCHAT_DB_USERNAME", "beamchat_app"),
+  password: System.get_env("BEAMCHAT_DB_PASSWORD", "beamchat_app"),
   hostname: System.get_env("PGHOST", "localhost"),
   database: "beam_chat_test#{System.get_env("MIX_TEST_PARTITION")}",
   pool: Ecto.Adapters.SQL.Sandbox,
   pool_size: System.schedulers_online() * 2
+
+# SECURITY: connect as a non-superuser role so Row Level Security applies in
+# tests. Create it with: `mix run priv/repo/setup_app_role.exs`.
 
 # We don't run a server during test. If one is required,
 # you can enable the server option below.
