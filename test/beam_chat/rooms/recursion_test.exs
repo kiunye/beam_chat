@@ -121,7 +121,7 @@ defmodule BeamChat.Rooms.RecursionTest do
 
     Repo.with_tenant(tenant.id, user.id, fn ->
       descendants = Rooms.room_descendants(root.id)
-      assert length(descendants) == 4
+      assert Enum.count_until(descendants, 5) == 4
 
       assert MapSet.new(Enum.map(descendants, & &1.id)) ==
                MapSet.new([root.id, child1.id, child2.id, grandchild.id])
@@ -138,7 +138,7 @@ defmodule BeamChat.Rooms.RecursionTest do
 
     Repo.with_tenant(tenant.id, user.id, fn ->
       ancestors = Rooms.room_ancestors(grandchild.id)
-      assert length(ancestors) == 2
+      assert Enum.count_until(ancestors, 3) == 2
 
       assert MapSet.new(Enum.map(ancestors, & &1.id)) ==
                MapSet.new([child1.id, root.id])

@@ -45,7 +45,7 @@ defmodule BeamChat.Video.TokenServiceTest do
 
       {:ok, %{token: jwt}} = TokenService.generate_token(user, room_id)
 
-      assert length(String.split(jwt, ".")) == 3
+      assert Enum.count_until(String.split(jwt, "."), 4) == 3
     end
 
     test "token claims contain expected identity, room, and join grant" do

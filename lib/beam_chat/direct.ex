@@ -224,12 +224,16 @@ defmodule BeamChat.Direct do
   end
 
   defp persist_and_broadcast(msg) do
-    with {:ok, %DirectMessage{} = row} <- Persister.persist_and_preload(msg) do
-      broadcast_new_message(row)
-      {:ok, row}
-    else
-      {:error, _reason} = err -> err
-      {:ok, other} -> {:error, {:persist_failed, {:unexpected_row, other}}}
+    case Persister.persist_and_preload(msg) do
+      {:ok, %DirectMessage{} = row} ->
+        broadcast_new_message(row)
+        {:ok, row}
+
+      {:error, _reason} = err ->
+        err
+
+      {:ok, other} ->
+        {:error, {:persist_failed, {:unexpected_row, other}}}
     end
   end
 end

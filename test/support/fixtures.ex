@@ -17,7 +17,12 @@ defmodule BeamChat.TestFixtures do
   alias BeamChat.Wallet.WalletTransaction
 
   def unique_suffix do
-    :erlang.unique_integer([:positive]) |> to_string()
+    # UUID-based so fixture names are globally unique and never collide with
+    # leftover data that may persist in the test database between runs (the SQL
+    # sandbox is not guaranteed to roll back every fixture insert in this
+    # environment). An integer suffix would eventually wrap/reset and clash with
+    # committed `user_NNNN` / `room-NNNN` rows.
+    Ecto.UUID.generate() |> String.replace("-", "")
   end
 
   def user_fixture(attrs \\ %{}) do
@@ -253,6 +258,19 @@ defmodule BeamChat.TestFixtures do
   end
 
   def wallet_transaction_fixture(wallet, attrs \\ %{}) do
+    # Assign a strictly-increasing `inserted_at` per call (within a test
+    # process) so that `Wallet.list_transactions/3` (ordered
+    # `desc: inserted_at, desc: id`) yields a stable, creation-order
+    # newest-first sequence instead of falling back to the random UUID `id`
+    # tie-break that occurs when second-precision timestamps coincide. This
+    # keeps the pagination/ordering tests deterministic and non-flaky.
+    counter = Process.get(:beamchat_wallet_txn_fixture_counter, 0) + 1
+    Process.put(:beamchat_wallet_txn_fixture_counter, counter)
+
+    inserted_at =
+      DateTime.utc_now(:second)
+      |> DateTime.add(counter, :second)
+
     {:ok, t} =
       %WalletTransaction{}
       |> WalletTransaction.changeset(
@@ -268,6 +286,7 @@ defmodule BeamChat.TestFixtures do
           attrs
         )
       )
+      |> Ecto.Changeset.change(inserted_at: inserted_at)
       |> Repo.insert()
 
     t
@@ -311,10 +330,19 @@ defmodule BeamChat.TestFixtures do
       )
       |> Map.put_new(:tenant_id, room.tenant_id)
 
+    # A distinct `started_at` per call is required: the
+    # `group_subscriptions_user_id_room_id_started_at` unique index forbids
+    # two rows for the same (user, room) sharing a `started_at` (including
+    # two `nil`s). We derive a unique, monotonic offset from `unique_integer`
+    # so back-to-back fixture calls never collide.
+    started_at =
+      DateTime.utc_now(:second)
+      |> DateTime.add(-rem(:erlang.unique_integer([:positive]), 1_000_000), :second)
+
     {:ok, sub} =
       Repo.with_tenant(room.tenant_id, user.id, fn ->
         %GroupSubscription{}
-        |> GroupSubscription.changeset(attrs)
+        |> GroupSubscription.changeset(Map.put_new(attrs, :started_at, started_at))
         |> Repo.insert()
       end)
 

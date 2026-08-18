@@ -1,15 +1,9 @@
 defmodule BeamChatWeb.ConnCase do
   @moduledoc """
-  This module defines the test case to be used by
-  tests that require setting up a connection.
-
-  Such tests rely on `Phoenix.ConnTest` and also
-  import other functionality to make it easier
-  to build common data structures and query the data layer.
-
-  Finally, if the test case interacts with the database,
-  we enable the SQL sandbox, so changes done to the database
-  are reverted at the end of every test. If you are using
+  Test helper for connection-based tests. Provides `Phoenix.ConnTest`
+  utilities and other helpers for building common data structures and
+  querying the data layer. Enables the SQL sandbox so database changes
+  are reverted after each test.
   PostgreSQL, you can even run database tests asynchronously
   by setting `use BeamChatWeb.ConnCase, async: true`, although
   this option is not recommended for other databases.

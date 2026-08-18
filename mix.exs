@@ -51,6 +51,7 @@ defmodule BeamChat.MixProject do
       {:ecto_sql, "~> 3.13"},
       {:postgrex, ">= 0.0.0"},
       {:phoenix_html, "~> 4.1"},
+      {:ex_slop, "~> 0.1", only: [:dev, :test], runtime: false},
       {:phoenix_live_reload, "~> 1.2", only: :dev},
       {:phoenix_live_view, "~> 1.1.0"},
       {:lazy_html, ">= 0.1.0", only: :test},
@@ -80,7 +81,7 @@ defmodule BeamChat.MixProject do
       # Override livekit's transitive dep to fix Elixir 1.19 macro expansion
       # (https://hexdocs.pm/protobuf/0.15.0/changelog.html):
       #   v0.15.0 - Fix a possible compilation error on Elixir 1.19.
-      {:protobuf, "~> 0.15.0", override: true},
+      {:protobuf, "~> 0.16.0", override: true},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:sobelow, "~> 0.14", only: [:dev, :test], runtime: false}

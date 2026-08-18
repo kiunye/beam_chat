@@ -1,8 +1,7 @@
 defmodule BeamChatWeb.PageHTML do
   @moduledoc """
-  This module contains pages rendered by PageController.
-
-  See the `page_html` directory for all templates available.
+  HTML pages rendered by `PageController`. See the `page_html` directory
+  for all available templates.
   """
   use BeamChatWeb, :html
 
