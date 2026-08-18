@@ -10,8 +10,8 @@ defmodule BeamChat.SSOTest do
   end
 
   defp sign(secret, claims) do
-    Joken.Signer.create("HS256", secret)
-    |> Joken.generate_and_get!(claims)
+    signer = Joken.Signer.create("HS256", secret)
+    Joken.generate_and_sign!(%{}, claims, signer)
   end
 
   defp with_secrets(secrets, fun) do

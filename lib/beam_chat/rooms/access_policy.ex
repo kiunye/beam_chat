@@ -16,6 +16,9 @@ defmodule BeamChat.Rooms.AccessPolicy do
   alias BeamChat.Rooms.RoomMember
   alias BeamChat.Tenants
 
+  @type room_type :: %Room{}
+  @type room_list :: [room_type]
+
   @type outcome ::
           :ok
           | {:blocked, :upgrade_required}
@@ -83,7 +86,7 @@ defmodule BeamChat.Rooms.AccessPolicy do
 
   Both branches run inside `Repo.with_tenant/3` so PostgreSQL RLS applies.
   """
-  @spec list_visible_rooms(struct() | Ecto.UUID.t(), struct() | Ecto.UUID.t()) :: [Room.t()]
+  @spec list_visible_rooms(struct() | Ecto.UUID.t(), struct() | Ecto.UUID.t()) :: room_list
   def list_visible_rooms(user, tenant) do
     tenant_id = id_of(tenant)
     user_id = id_of(user)
@@ -112,7 +115,7 @@ defmodule BeamChat.Rooms.AccessPolicy do
   `room.tenant_id` or holds a `room_members` row for that room. Wrapped in
   `Repo.with_tenant/3` so RLS applies.
   """
-  @spec can_view?(struct() | Ecto.UUID.t(), Room.t()) :: boolean()
+  @spec can_view?(struct() | Ecto.UUID.t(), room_type) :: boolean()
   def can_view?(user, %Room{tenant_id: tenant_id} = room) do
     user_id = id_of(user)
 

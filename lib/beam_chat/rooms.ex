@@ -18,6 +18,10 @@ defmodule BeamChat.Rooms do
   alias BeamChat.Rooms.RoomCategory
   alias BeamChat.Rooms.RoomMember
 
+  @type room_type :: %Room{}
+  @type room_list :: [room_type]
+  @type room_spec :: room_type | Ecto.UUID.t()
+
   @spec set_typing(Ecto.UUID.t(), Ecto.UUID.t(), boolean()) :: :ok
   def set_typing(room_id, user_id, is_typing) do
     event = if is_typing, do: :user_typing, else: :user_stopped_typing
@@ -79,12 +83,16 @@ defmodule BeamChat.Rooms do
   end
 
   defp persist_and_broadcast(msg) do
-    with {:ok, %Message{} = row} <- Persister.persist_and_preload(msg) do
-      broadcast_new_message(row)
-      {:ok, row}
-    else
-      {:error, _reason} = err -> err
-      {:ok, other} -> {:error, {:persist_failed, {:unexpected_row, other}}}
+    case Persister.persist_and_preload(msg) do
+      {:ok, %Message{} = row} ->
+        broadcast_new_message(row)
+        {:ok, row}
+
+      {:error, _reason} = err ->
+        err
+
+      {:ok, other} ->
+        {:error, {:persist_failed, {:unexpected_row, other}}}
     end
   end
 
@@ -286,7 +294,7 @@ defmodule BeamChat.Rooms do
   Direct (one level) children of the given parent room id. Returns full `Room`
   structs ordered by name.
   """
-  @spec list_child_rooms(Ecto.UUID.t() | nil) :: [Room.t()]
+  @spec list_child_rooms(Ecto.UUID.t() | nil) :: room_list
   def list_child_rooms(parent_id) do
     Repo.scoped(fn ->
       base =
@@ -305,7 +313,7 @@ defmodule BeamChat.Rooms do
   The room itself plus every nested descendant, as full `Room` structs. Uses a
   recursive CTE so it is a single query regardless of tree depth.
   """
-  @spec room_descendants(Ecto.UUID.t()) :: [Room.t()]
+  @spec room_descendants(Ecto.UUID.t()) :: room_list
   def room_descendants(room_id) do
     Repo.scoped(fn ->
       from(r in Room,
@@ -324,7 +332,7 @@ defmodule BeamChat.Rooms do
   All ancestors of the room up to the root, as full `Room` structs. The room
   itself is excluded. Uses a recursive CTE walking `parent_id` upward.
   """
-  @spec room_ancestors(Ecto.UUID.t()) :: [Room.t()]
+  @spec room_ancestors(Ecto.UUID.t()) :: room_list
   def room_ancestors(room_id) do
     Repo.scoped(fn ->
       from(r in Room,
@@ -345,7 +353,7 @@ defmodule BeamChat.Rooms do
   `Room` structs with the root first and the room last. Walks `parent_id`
   upward via repeated `Repo.get`; safe because tree depth is small.
   """
-  @spec room_path(Ecto.UUID.t()) :: [Room.t()]
+  @spec room_path(Ecto.UUID.t()) :: room_list
   def room_path(room_id) do
     Repo.scoped(fn ->
       case Repo.get(Room, room_id) do
@@ -383,22 +391,22 @@ defmodule BeamChat.Rooms do
   PostgreSQL RLS update policies see the correct GUCs. The originating caller
   owns the transaction.
   """
-  @spec move_room(Room.t(), Ecto.UUID.t() | nil) ::
-          {:ok, Room.t()} | {:error, :cycle} | {:error, Ecto.Changeset.t()}
-  def move_room(%Room{} = room, new_parent_id) do
+  @spec move_room(room_spec, Ecto.UUID.t() | nil) ::
+          {:ok, room_type} | {:error, :cycle} | {:error, Ecto.Changeset.t()}
+  def move_room(room_spec, new_parent_id) do
     Repo.scoped(fn ->
       cond do
-        new_parent_id == room.id ->
+        new_parent_id == room_spec.id ->
           {:error, :cycle}
 
-        not is_nil(new_parent_id) and parent_tenant_mismatch?(room, new_parent_id) ->
+        not is_nil(new_parent_id) and parent_tenant_mismatch?(room_spec, new_parent_id) ->
           {:error, :cycle}
 
-        not is_nil(new_parent_id) and MapSet.member?(descendant_ids(room.id), new_parent_id) ->
+        not is_nil(new_parent_id) and MapSet.member?(descendant_ids(room_spec.id), new_parent_id) ->
           {:error, :cycle}
 
         true ->
-          room
+          room_spec
           |> change(parent_id: new_parent_id)
           |> Repo.update()
       end
@@ -418,27 +426,14 @@ defmodule BeamChat.Rooms do
     |> MapSet.new()
   end
 
-  @doc """
-  Build a `Room` from `attrs` (which must include `tenant_id` and `owner_id`),
-  insert it, and create an owning `RoomMember` (role `"owner"`) so the creator
-  can see and manage the room.
-
-  Returns `{:ok, room}`, `{:error, :missing_tenant}` when `tenant_id` is absent
-  from `attrs`, or `{:error, changeset}` if validation / insert fails. If the
-  `RoomMember` insert fails the whole operation rolls back (the caller's
-  `with_tenant` transaction).
-
-  ## Tenancy
-  This function performs writes and **must** be invoked inside
-  `BeamChat.Repo.with_tenant(tenant_id, owner_id, fn -> ... end)` so the
-  PostgreSQL RLS insert policies pass. The originating caller owns the
-  transaction.
-  """
   @spec create_room(map()) ::
-          {:ok, Room.t()} | {:error, :missing_tenant} | {:error, Ecto.Changeset.t()}
+          {:ok, room_type} | {:error, :missing_tenant} | {:error, Ecto.Changeset.t()}
   def create_room(attrs) when is_map(attrs) do
     Repo.scoped(fn ->
-      tenant_id = Map.get(attrs, :tenant_id) || Map.get(attrs, "tenant_id")
+      tenant_id =
+        attrs
+        |> Map.new(fn {k, v} -> {to_string(k), v} end)
+        |> Map.get("tenant_id")
 
       if is_nil(tenant_id) do
         {:error, :missing_tenant}

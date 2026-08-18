@@ -20,7 +20,7 @@ defmodule BeamChat.DirectTest do
       assert result.page == 1
       assert result.limit == 5
       assert result.page_count == 2
-      assert length(result.rows) == 5
+      assert Enum.count_until(result.rows, 6) == 5
     end
 
     test "second page returns remaining conversations" do
@@ -31,7 +31,7 @@ defmodule BeamChat.DirectTest do
       result = Direct.list_conversations_for(u, %{page: 2, limit: 5})
 
       assert result.page == 2
-      assert length(result.rows) == 2
+      assert Enum.count_until(result.rows, 3) == 2
     end
 
     test "loads other user and last message per row" do
