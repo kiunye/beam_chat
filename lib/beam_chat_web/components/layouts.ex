@@ -1,7 +1,7 @@
 defmodule BeamChatWeb.Layouts do
   @moduledoc """
-  This module holds layouts and related functionality
-  used by your application.
+  Application-wide layouts (including the root HTML skeleton) and related
+  template helpers.
   """
   use BeamChatWeb, :html
 

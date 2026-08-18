@@ -48,7 +48,7 @@ defmodule BeamChat.Wallet do
   whether another page exists, without an extra count query.
   """
   @spec list_transactions(String.t(), pos_integer(), non_neg_integer()) ::
-          {[%WalletTransaction{}], boolean()}
+          {list(struct()), boolean()}
   def list_transactions(user_id, limit, offset)
       when is_binary(user_id) and is_integer(limit) and limit > 0 and is_integer(offset) and
              offset >= 0 do
@@ -361,8 +361,6 @@ defmodule BeamChat.Wallet do
            |> WalletSchema.changeset(%{balance: new_balance})
            |> Repo.update() do
       {:ok, w, txn}
-    else
-      {:error, cs} -> {:error, cs}
     end
   end
 
@@ -396,7 +394,18 @@ defmodule BeamChat.Wallet do
         {:error, :invalid_price}
 
       true ->
-        run_subscribe_transaction(user_id, room, price)
+        # The `group_subscriptions` INSERT/SELECT is RLS-protected and requires the
+        # tenant/user GUCs. Production callers hit this via the request `on_mount`
+        # (which sets context), but we set it explicitly here so the subscription
+        # row is written with the correct tenant and passes the RLS insert policy.
+        # This does NOT weaken RLS — it supplies the context the policy requires.
+        #
+        # `with_tenant/3` opens the single surrounding transaction (which also
+        # holds the wallet advisory lock taken inside), so any `Repo.rollback/1`
+        # below unwinds the whole operation and surfaces the typed error.
+        Repo.with_tenant(room.tenant_id, user_id, fn ->
+          run_subscribe_transaction(user_id, room, price)
+        end)
     end
   end
 
@@ -404,21 +413,16 @@ defmodule BeamChat.Wallet do
     now = DateTime.utc_now(:second)
     expires_at = DateTime.add(now, @subscription_days * 86_400, :second)
 
-    Repo.transaction(fn ->
-      wallet = acquire_wallet_lock!(user_id)
+    wallet = acquire_wallet_lock!(user_id)
 
-      with :ok <- ensure_active_subscription_absent(user_id, room.id, now),
-           :ok <- ensure_sufficient(wallet, price),
-           {:ok, w_after, debit_txn} <- apply_debit(wallet, price, room),
-           {:ok, sub} <- insert_subscription(user_id, room.id, debit_txn.id, now, expires_at) do
-        {w_after, debit_txn, sub}
-      else
-        {:error, reason} -> Repo.rollback(reason)
-      end
-    end)
-    |> case do
-      {:ok, {w, txn, sub}} -> {:ok, w, txn, sub}
-      {:error, e} -> {:error, e}
+    with :ok <- ensure_active_subscription_absent(user_id, room.id, now),
+         :ok <- ensure_sufficient(wallet, price),
+         {:ok, w_after, debit_txn} <- apply_debit(wallet, price, room),
+         {:ok, sub} <-
+           insert_subscription(user_id, room.tenant_id, room.id, debit_txn.id, now, expires_at) do
+      {:ok, w_after, debit_txn, sub}
+    else
+      {:error, reason} -> Repo.rollback(reason)
     end
   end
 
@@ -464,10 +468,11 @@ defmodule BeamChat.Wallet do
     end
   end
 
-  defp insert_subscription(user_id, room_id, wallet_txn_id, started_at, expires_at) do
+  defp insert_subscription(user_id, tenant_id, room_id, wallet_txn_id, started_at, expires_at) do
     %GroupSubscription{}
     |> GroupSubscription.changeset(%{
       user_id: user_id,
+      tenant_id: tenant_id,
       room_id: room_id,
       wallet_txn_id: wallet_txn_id,
       started_at: started_at,

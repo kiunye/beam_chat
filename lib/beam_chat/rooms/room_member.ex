@@ -12,15 +12,17 @@ defmodule BeamChat.Rooms.RoomMember do
 
     belongs_to :room, BeamChat.Rooms.Room, foreign_key: :room_id
     belongs_to :user, BeamChat.Accounts.User, foreign_key: :user_id
+    belongs_to :tenant, BeamChat.Tenants.Tenant, foreign_key: :tenant_id
   end
 
   def changeset(member, attrs) do
     member
-    |> cast(attrs, [:room_id, :user_id, :role, :joined_at, :expires_at])
+    |> cast(attrs, [:room_id, :user_id, :tenant_id, :role, :joined_at, :expires_at])
     |> validate_required([:room_id, :user_id, :role])
     |> validate_inclusion(:role, ~w(member moderator owner))
     |> unique_constraint([:room_id, :user_id])
     |> foreign_key_constraint(:room_id)
     |> foreign_key_constraint(:user_id)
+    |> foreign_key_constraint(:tenant_id)
   end
 end

@@ -30,16 +30,19 @@ defmodule BeamChatWeb.ChatLiveTest do
     conv = conversation_fixture(u1, u2)
     conn = log_in_user(conn, u1)
 
-    # First 60 navigations stay in the thread.
-    for _ <- 1..60 do
+    # A single `live/2` drives the LiveView twice — the HTTP render and the
+    # websocket mount — and both invoke `handle_params`, where the per-minute
+    # thread-view rate limiter runs. So every navigation below counts as two
+    # checks against the 60-checks/minute limit. 30 navigations (60 checks)
+    # are allowed; the 31st (62nd check) is bounced back to the inbox.
+    for _ <- 1..30 do
       {:ok, _view, _html} = live(conn, ~p"/messages/#{conv.id}")
-      conn = recycle(conn)
     end
 
-    # 61st navigation gets bounced back to the inbox with a flash.
-    {:ok, view, html} = live(conn, ~p"/messages/#{conv.id}")
+    # 31st navigation gets bounced back to the inbox with a flash.
+    {:error, {:live_redirect, %{to: "/messages", flash: flash}}} =
+      live(conn, ~p"/messages/#{conv.id}")
 
-    assert html =~ "loading that conversation too quickly"
-    assert has_element?(view, "#dm-compose-form")
+    assert flash["error"] =~ "loading that conversation too quickly"
   end
 end
