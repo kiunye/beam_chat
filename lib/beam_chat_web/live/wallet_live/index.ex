@@ -281,6 +281,7 @@ defmodule BeamChatWeb.WalletLive.Index do
   def render(assigns) do
     ~H"""
     <div class="space-y-8" id="wallet-page">
+      <!-- Header -->
       <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 class="font-display text-2xl font-semibold tracking-tight text-base-content">Wallet</h1>
@@ -299,24 +300,26 @@ defmodule BeamChatWeb.WalletLive.Index do
           Refresh
         </button>
       </div>
+      <!-- Balance Display as Vault -->
+      <div class="rounded-box border border-base-300 bg-base-100 p-6 shadow-sm">
+        <p class="text-xs font-semibold uppercase tracking-wide text-base-content/60 mb-2">Balance</p>
 
-      <section
-        class="rounded-box border border-base-300 bg-base-200/30 p-6 shadow-sm"
-        id="wallet-balance-card"
-      >
-        <p class="text-xs font-semibold uppercase tracking-wide text-base-content/55">Balance</p>
+        <div class="flex items-end gap-2">
+          <p class="font-display text-3xl font-semibold text-base-content tabular-nums">
+            {format_money(@wallet.balance)}
+          </p>
 
-        <p class="font-display text-3xl font-semibold text-base-content mt-1 tabular-nums">
-          {format_money(@wallet.balance)} {@wallet.currency}
-        </p>
-      </section>
-
+          <p class="text-sm text-base-content/60 mb-1">{@wallet.currency}</p>
+        </div>
+      </div>
+      <!-- Top-up Methods -->
       <div class="grid gap-6 lg:grid-cols-2">
+        <!-- Paystack -->
         <section
           class="rounded-box border border-base-300 bg-base-100 p-5 space-y-4"
           id="paystack-topup"
         >
-          <h2 class="font-display font-semibold text-lg">Paystack</h2>
+          <h2 class="font-display font-semibold text-lg text-base-content">Paystack</h2>
 
           <.form
             for={@paystack_form}
@@ -324,22 +327,44 @@ defmodule BeamChatWeb.WalletLive.Index do
             id="paystack-topup-form"
             class="space-y-3"
           >
-            <.input field={@paystack_form[:amount]} type="text" label="Amount (KES)" required />
-            <button type="submit" class="btn btn-primary w-full sm:w-auto">Pay with Paystack</button>
+            <.input
+              field={@paystack_form[:amount]}
+              type="text"
+              label="Amount (KES)"
+              placeholder="0.00"
+              required
+            />
+            <button
+              type="submit"
+              class="btn btn-primary w-full sm:w-auto"
+            >
+              Pay with Paystack
+            </button>
           </.form>
         </section>
-
+        <!-- M-Pesa -->
         <section class="rounded-box border border-base-300 bg-base-100 p-5 space-y-4" id="mpesa-topup">
-          <h2 class="font-display font-semibold text-lg">M-Pesa</h2>
+          <h2 class="font-display font-semibold text-lg text-base-content">M-Pesa</h2>
 
           <.form for={@mpesa_form} phx-submit="mpesa_topup" id="mpesa-topup-form" class="space-y-3">
-            <.input field={@mpesa_form[:amount]} type="text" label="Amount (KES)" required />
-            <.input field={@mpesa_form[:phone]} type="text" label="Phone (Safaricom)" required />
-            <button type="submit" class="btn btn-primary w-full sm:w-auto">Send STK push</button>
+            <.input
+              field={@mpesa_form[:amount]}
+              type="text"
+              label="Amount (KES)"
+              placeholder="0.00"
+              required
+            />
+            <.input
+              field={@mpesa_form[:phone]}
+              type="text"
+              label="Phone (Safaricom)"
+              placeholder="07XXXXXXXX"
+              required
+            /> <button type="submit" class="btn btn-primary w-full sm:w-auto">Send STK push</button>
           </.form>
         </section>
       </div>
-
+      <!-- Staff Credit Panel -->
       <section
         :if={@show_staff_panel}
         class="rounded-box border border-warning/40 bg-warning/5 p-5 space-y-3"
@@ -358,7 +383,7 @@ defmodule BeamChatWeb.WalletLive.Index do
           <button type="submit" class="btn btn-warning btn-sm">Apply credit</button>
         </.form>
       </section>
-
+      <!-- Transaction History -->
       <section class="rounded-box border border-base-300 bg-base-100 p-5" id="wallet-transactions">
         <h2 class="font-display font-semibold text-lg mb-3">Recent activity</h2>
 
@@ -368,7 +393,7 @@ defmodule BeamChatWeb.WalletLive.Index do
           <div
             :for={{tid, txn} <- @streams.transactions}
             id={tid}
-            class="flex flex-wrap justify-between gap-2 text-sm border-b border-base-300/60 pb-2"
+            class="flex flex-wrap justify-between gap-2 text-sm border-b border-base-300/60 pb-2 last:border-b-0 last:pb-0"
           >
             <div>
               <span class="font-medium text-base-content">{txn.description}</span>
@@ -391,7 +416,7 @@ defmodule BeamChatWeb.WalletLive.Index do
             id="load-more-txns"
             type="button"
             phx-click="load_more"
-            class="mt-4 w-full rounded-btn border border-base-300 bg-base-200 px-4 py-2 text-sm font-medium text-base-content transition hover:border-base-content/40 hover:bg-base-300"
+            class="mt-4 w-full rounded-box border border-base-300 bg-base-200 px-4 py-2 text-sm font-medium text-base-content transition hover:border-base-content/40 hover:bg-base-300"
           >
             Load more
           </button>

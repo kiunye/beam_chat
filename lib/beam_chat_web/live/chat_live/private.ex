@@ -194,6 +194,7 @@ defmodule BeamChatWeb.ChatLive.Private do
     <%= case @live_action do %>
       <% :index -> %>
         <div class="space-y-6">
+          <!-- Header -->
           <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <h1 class="font-display text-2xl font-semibold tracking-tight text-base-content">
@@ -209,12 +210,12 @@ defmodule BeamChatWeb.ChatLive.Private do
               Rooms
             </.link>
           </div>
-
+          <!-- Start Conversation Form -->
           <div class="rounded-box border border-base-300 bg-base-200/30 p-4 space-y-3">
             <h2 class="text-sm font-semibold text-base-content">Start a conversation</h2>
 
             <p class="text-xs text-base-content/65">
-              Paste another member’s user id (UUID from profile/admin tools). A richer people picker
+              Paste another member's user id (UUID from profile/admin tools). A richer people picker
               ships later.
             </p>
 
@@ -236,11 +237,11 @@ defmodule BeamChatWeb.ChatLive.Private do
               </button>
             </.form>
           </div>
-
+          <!-- Empty State -->
           <div :if={@conversation_rows == []} class="text-sm text-base-content/60 py-8 text-center">
             No conversations yet — start one above.
           </div>
-
+          <!-- Conversation List -->
           <ul :if={@conversation_rows != []} class="space-y-2" id="conversation-list">
             <li :for={{conv, other, last} <- @conversation_rows} id={"conv-row-" <> conv.id}>
               <.link
@@ -260,7 +261,7 @@ defmodule BeamChatWeb.ChatLive.Private do
               </.link>
             </li>
           </ul>
-
+          <!-- Pagination -->
           <div
             :if={@inbox_meta.total_count > @inbox_meta.limit}
             class="flex flex-wrap items-center justify-center gap-3 pt-4 text-sm text-base-content/70"
@@ -290,14 +291,38 @@ defmodule BeamChatWeb.ChatLive.Private do
           </div>
         </div>
       <% :show -> %>
-        <div class="space-y-4" id="dm-thread">
+        <!-- DM Thread View -->
+        <div class="space-y-4">
           <div class="flex flex-wrap items-center gap-2">
             <.link navigate={~p"/messages"} class="btn btn-ghost btn-sm" id="back-to-inbox">
               ← Inbox
             </.link>
             <h1 class="font-display text-xl font-semibold">{@other_user && @other_user.username}</h1>
+            <!-- Video Call Icon -->
+            <div class="ml-auto">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                class="h-5 w-5 text-primary cursor-pointer hover:text-primary/80"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"
+                />
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M15 10l4-4 4 4-4 4-4-4z"
+                />
+              </svg>
+            </div>
           </div>
-
+          <!-- Message Thread -->
           <section class="rounded-box border border-base-300 bg-base-100 flex flex-col min-h-[24rem]">
             <div
               id="dm-scroll"
@@ -312,7 +337,11 @@ defmodule BeamChatWeb.ChatLive.Private do
                 No messages yet.
               </div>
 
-              <div :for={{mid, msg} <- @streams.messages} id={mid} class="text-sm flex gap-2">
+              <div
+                :for={{mid, msg} <- @streams.messages}
+                id={mid}
+                class="flex gap-2 text-sm"
+              >
                 <span class="w-24 shrink-0 text-xs text-base-content/55 truncate">
                   {msg.sender && msg.sender.username}
                 </span>
@@ -330,7 +359,7 @@ defmodule BeamChatWeb.ChatLive.Private do
                 field={@message_form[:content]}
                 type="textarea"
                 class="textarea textarea-bordered flex-1 min-h-[3rem]"
-                placeholder="Write a direct message…"
+                placeholder="Write a direct message..."
                 rows="2"
               /> <button type="submit" class="btn btn-primary self-end" id="send-dm">Send</button>
             </.form>

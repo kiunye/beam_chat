@@ -117,7 +117,7 @@ defmodule BeamChatWeb.RoomTreeLive do
       {:ok, _room} ->
         socket =
           socket
-          |> put_flash(:info, "Room “#{attrs["name"]}” created.")
+          |> put_flash(:info, "Room \"#{attrs["name"]}\" created.")
           |> assign(:draft, new_draft())
           |> assign(:show_create, false)
           |> assign(:form, draft_to_form(new_draft()))
@@ -144,13 +144,13 @@ defmodule BeamChatWeb.RoomTreeLive do
     ~H"""
     <div id={"room-node-#{@node.room.id}"} class="motion-safe:transition-all motion-safe:duration-200">
       <div class={[
-        "flex items-start justify-between gap-3 rounded-box border bg-base-100 p-3 shadow-sm",
+        "flex items-start justify-between gap-3 rounded-lg border bg-base-100 p-3 shadow-sm",
         "hover:border-primary/40 hover:shadow-md",
         @node.room.parent_id == nil && "border-base-300/80"
       ]}>
         <div class="min-w-0">
           <div class="flex flex-wrap items-center gap-2">
-            <p class="font-display font-semibold text-base-content truncate">
+            <p class="font-display font-semibold text-base-content truncate text-sm">
               {@node.room.name}
             </p>
 
@@ -159,13 +159,13 @@ defmodule BeamChatWeb.RoomTreeLive do
             </span>
           </div>
 
-          <p :if={@node.room.slug} class="text-xs text-base-content/55 truncate">
+          <p :if={@node.room.slug} class="text-xs text-base-content/60 truncate">
             @{@node.room.slug}
           </p>
 
           <p
             :if={@node.room.description && @node.room.description != ""}
-            class="mt-1 text-sm text-base-content/70"
+            class="mt-1 text-xs text-base-content/70"
           >
             {@node.room.description}
           </p>
@@ -183,10 +183,126 @@ defmodule BeamChatWeb.RoomTreeLive do
 
       <div
         :if={@node.children != []}
-        class="ml-4 mt-2 space-y-2 border-l border-base-300/70 pl-4 sm:ml-5 sm:pl-5"
+        class="ml-3 mt-2 space-y-2 border-l border-base-300/70 pl-3"
       >
         <.room_node :for={child <- @node.children} node={child} is_admin={@is_admin} />
       </div>
+    </div>
+    """
+  end
+
+  @impl true
+  def render(assigns) do
+    ~H"""
+    <div class="space-y-6">
+      <!-- Header -->
+      <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 class="font-display text-2xl font-semibold tracking-tight text-base-content">
+            Admin Console
+          </h1>
+
+          <p class="text-sm text-base-content/70 mt-1">
+            Manage your tenants, rooms, and workspace settings.
+          </p>
+        </div>
+      </div>
+      
+    <!-- Tenant Switcher -->
+      <div class="rounded-box border border-base-300 bg-base-100 p-4">
+        <h2 class="text-sm font-semibold text-base-content mb-2">Current Tenant</h2>
+
+        <.form
+          for={@tenant_form}
+          id="tenant-switcher-form"
+          phx-submit="tenant-selected"
+          class="flex items-center gap-2"
+        >
+          <.input
+            field={@tenant_form[:tenant_id]}
+            type="select"
+            class="w-48"
+            options={Enum.map(@tenants, fn t -> {t.name || t.id, t.id} end)}
+          />
+        </.form>
+      </div>
+
+      <%= if @tree != [] do %>
+        <!-- Room Tree -->
+        <div class="rounded-box border border-base-300 bg-base-100 p-4">
+          <h2 class="font-display font-semibold text-lg mb-3">Property Tree</h2>
+
+          <ul id="room-tree" class="space-y-2">
+            <%= for node <- @tree do %>
+              <.room_node node={node} is_admin={@is_admin} />
+            <% end %>
+          </ul>
+        </div>
+      <% else %>
+        <!-- Empty State -->
+        <div class="rounded-box border border-base-300 bg-base-200/40 p-8 text-center">
+          <p class="text-base-content/70 mb-2">No rooms in this tenant.</p>
+          <.link navigate={~p"/rooms"} class="link link-primary">Browse all rooms</.link>
+        </div>
+      <% end %>
+      
+    <!-- Create Room Panel -->
+      <%= if @show_create do %>
+        <div class="rounded-box border border-primary bg-primary/5 p-4">
+          <h3 class="font-display font-semibold text-base-content mb-3">Create New Room</h3>
+
+          <.form
+            for={@form}
+            id="create-room-form"
+            phx-submit="save"
+            phx-change="validate"
+            class="space-y-4"
+          >
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <.input
+                field={@form[:name]}
+                type="text"
+                label="Room Name"
+                placeholder="Enter room name"
+                required
+              />
+
+              <.input
+                field={@form[:slug]}
+                type="text"
+                label="Slug"
+                placeholder="room-slug"
+                required
+              />
+            </div>
+
+            <.input
+              field={@form[:description]}
+              type="text"
+              label="Description"
+              placeholder="Room description"
+              class="w-full"
+            />
+
+            <.input
+              field={@form[:type]}
+              type="select"
+              label="Room Type"
+              options={[
+                {"Public", "public"},
+                {"Private", "private"},
+                {"Secret", "secret"}
+              ]}
+            />
+
+            <div class="flex justify-end gap-2">
+              <.button type="submit" class="btn btn-primary btn-sm">
+                Create Room
+              </.button>
+            </div>
+          </.form>
+        </div>
+      <% end %>
     </div>
     """
   end
@@ -252,14 +368,5 @@ defmodule BeamChatWeb.RoomTreeLive do
     Map.get(by_parent, parent_id, [])
     |> Enum.sort_by(& &1.name)
     |> Enum.map(fn room -> %{room: room, children: build_from(by_parent, room.id)} end)
-  end
-
-  # Flattens the tree into select options with indentation. Only meaningful for
-  # admins (who can create); non-admins never see the form.
-  defp parent_options(nodes, depth \\ 0) do
-    Enum.flat_map(nodes, fn %{room: room, children: children} ->
-      label = String.duplicate("  ", depth) <> room.name
-      [{label, room.id} | parent_options(children, depth + 1)]
-    end)
   end
 end
