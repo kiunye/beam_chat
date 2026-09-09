@@ -351,12 +351,13 @@ defmodule BeamChatWeb.RoomLive.Show do
   def render(assigns) do
     ~H"""
     <div class="space-y-6">
-      <div class="flex flex-wrap items-center gap-3">
-        <.link navigate={~p"/rooms"} class="btn btn-ghost btn-sm" id="back-to-rooms">← Rooms</.link>
-        <h1 class="font-display text-xl font-semibold tracking-tight text-base-content">
-          {@room.name}
-        </h1>
-        <span class="badge badge-ghost badge-sm">@{@room.slug}</span>
+      <!-- Room Header with Sub-docket Tabs -->
+      <div class="flex flex-col gap-3">
+        <div class="flex items-center gap-2">
+          <.link navigate={~p"/rooms"} class="btn btn-ghost btn-sm" id="back-to-rooms">← Rooms</.link>
+          <h1 class="font-display text-xl font-semibold text-base-content truncate">{@room.name}</h1>
+          <span class="badge badge-ghost badge-sm">@{@room.slug}</span>
+        </div>
       </div>
 
       <%= case @access do %>
@@ -415,7 +416,9 @@ defmodule BeamChatWeb.RoomLive.Show do
             <.link navigate={~p"/rooms"} class="btn btn-ghost btn-sm mt-3">Leave</.link>
           </div>
         <% :ok -> %>
-          <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_14rem] items-stretch">
+          <!-- Active Channel Layout: Main Chat + Presence Panel -->
+          <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_16rem] items-stretch">
+            <!-- Message Stream Panel -->
             <section
               class="flex flex-col rounded-box border border-base-300 bg-base-100 min-h-[28rem] shadow-sm"
               id="room-chat-panel"
@@ -443,7 +446,9 @@ defmodule BeamChatWeb.RoomLive.Show do
                   </div>
 
                   <div class="min-w-0 flex-1">
-                    <p class="text-base-content whitespace-pre-wrap break-words">{msg.content}</p>
+                    <%= if msg.content do %>
+                      <p class="text-base-content whitespace-pre-wrap break-words">{msg.content}</p>
+                    <% end %>
 
                     <p class="text-[0.65rem] text-base-content/45 mt-0.5">
                       {format_time(msg.inserted_at)}
@@ -479,9 +484,9 @@ defmodule BeamChatWeb.RoomLive.Show do
                 </button>
               </.form>
             </section>
-
+            <!-- Presence & Video Panel -->
             <aside
-              class="rounded-box border border-base-300 bg-base-200/40 p-3"
+              class="rounded-box border border-base-300 bg-base-200/44 p-3"
               id="room-presence-panel"
             >
               <h2 class="text-xs font-semibold uppercase tracking-wide text-base-content/60 mb-2">
@@ -496,7 +501,7 @@ defmodule BeamChatWeb.RoomLive.Show do
                   <span class="font-medium text-base-content truncate block">
                     {presence_label(uid, data)}
                   </span>
-                  <span class="text-[0.65rem] text-success">● online</span>
+                  <span class="text-[0.65rem] text-success"> ● online</span>
                   <span
                     :if={presence_video_active?(data)}
                     class="badge badge-info badge-xs ml-1"
@@ -508,7 +513,7 @@ defmodule BeamChatWeb.RoomLive.Show do
               </ul>
 
               <p :if={map_size(@presence_list) == 0} class="text-xs text-base-content/55">
-                Connecting…
+                Connecting...
               </p>
 
               <.live_component

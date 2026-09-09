@@ -1,0 +1,4 @@
+* text=auto eol=lf
+*.ex text eol=lf
+*.exs text eol=lf
+*.heex text eol=lf

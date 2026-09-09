@@ -57,6 +57,7 @@ defmodule BeamChatWeb.RoomLive.Index do
   def render(assigns) do
     ~H"""
     <div class="space-y-8">
+      <!-- Header -->
       <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 class="font-display text-2xl font-semibold tracking-tight text-base-content">Rooms</h1>
@@ -74,7 +75,7 @@ defmodule BeamChatWeb.RoomLive.Index do
           Direct messages
         </.link>
       </div>
-
+      <!-- Search Form -->
       <.form
         for={@form}
         id="room-filter-form"
@@ -101,7 +102,7 @@ defmodule BeamChatWeb.RoomLive.Index do
           />
         </div>
       </.form>
-
+      <!-- Empty State -->
       <div
         :if={@rooms == []}
         class="rounded-box border border-base-300 bg-base-200/40 p-8 text-center"
@@ -110,8 +111,8 @@ defmodule BeamChatWeb.RoomLive.Index do
 
         <p class="text-sm text-base-content/60 mt-2">Try clearing search or pick another category.</p>
       </div>
-
-      <ul :if={@rooms != []} class="grid gap-3 sm:grid-cols-2" id="room-list">
+      <!-- Room List -->
+      <ul :if={@rooms != []} class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" id="room-list">
         <li :for={room <- @rooms} id={"room-#{room.id}"}>
           <.link
             navigate={~p"/rooms/#{room.slug}"}
@@ -120,7 +121,7 @@ defmodule BeamChatWeb.RoomLive.Index do
               "hover:border-primary/40 hover:shadow-md motion-safe:transition-all motion-safe:duration-200"
             ]}
           >
-            <div class="flex items-start justify-between gap-2">
+            <div class="flex items-start justify-between gap-2 mb-2">
               <div class="min-w-0">
                 <p class="font-display font-semibold text-base-content truncate">{room.name}</p>
 
@@ -132,11 +133,11 @@ defmodule BeamChatWeb.RoomLive.Index do
               </span>
             </div>
 
-            <p :if={room.category} class="text-xs text-base-content/60 mt-2">{room.category.name}</p>
+            <p :if={room.category} class="text-xs text-base-content/60">{room.category.name}</p>
           </.link>
         </li>
       </ul>
-
+      <!-- Pagination -->
       <div
         :if={@room_list_meta.total_count > @room_list_meta.limit}
         class="flex flex-wrap items-center justify-center gap-3 pt-4 text-sm text-base-content/70"
