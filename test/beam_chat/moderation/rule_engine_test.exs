@@ -50,6 +50,60 @@ defmodule BeamChat.Moderation.RuleEngineTest do
     end
   end
 
+  describe "rate_limit" do
+    # The counters table is shared with the running app's RuleEngine, so each
+    # test uses a unique user_id to avoid cross-test interference.
+    defp rate_msg(user_id), do: %{room_id: 1, user_id: user_id, content: "hi", inserted_at: nil}
+
+    defp rate_rule(max_count, window_seconds) do
+      %{type: "rate_limit", config: %{max_count: max_count, window_seconds: window_seconds}}
+    end
+
+    test "allows up to max_count messages per window, then blocks" do
+      user_id = :erlang.unique_integer([:positive])
+      msg = rate_msg(user_id)
+      rule = rate_rule(2, 60)
+
+      assert RuleEngine.apply_single_rule(rule, msg) == msg
+      assert RuleEngine.apply_single_rule(rule, msg) == msg
+
+      assert {:blocked, ^msg, reason} = RuleEngine.apply_single_rule(rule, msg)
+      assert reason =~ "Rate limit exceeded: 2/2"
+    end
+
+    test "starts a fresh window (and resets the counter) when the window expires" do
+      user_id = :erlang.unique_integer([:positive])
+      msg = rate_msg(user_id)
+      rule = rate_rule(1, 60)
+
+      assert RuleEngine.apply_single_rule(rule, msg) == msg
+      assert {:blocked, ^msg, _reason} = RuleEngine.apply_single_rule(rule, msg)
+
+      # Age the window entry out by rewriting its start into the past
+      # (deterministic — no sleep). The next message must open a new window
+      # and pass.
+      expired_start = System.system_time(:millisecond) - 61_000
+      key = {user_id, :message_count}
+      true = :ets.insert(:moderation_rate_counters, {key, 99, expired_start})
+
+      assert RuleEngine.apply_single_rule(rule, msg) == msg
+
+      # The reset restarts counting from 1, so the very next message blocks.
+      assert {:blocked, ^msg, _reset_reason} = RuleEngine.apply_single_rule(rule, msg)
+    end
+
+    test "refresh_cache keeps rate-limit counters intact" do
+      user_id = :erlang.unique_integer([:positive])
+      msg = rate_msg(user_id)
+      rule = rate_rule(1, 60)
+
+      assert RuleEngine.apply_single_rule(rule, msg) == msg
+      assert :ok = RuleEngine.refresh_cache()
+
+      assert {:blocked, ^msg, _reason} = RuleEngine.apply_single_rule(rule, msg)
+    end
+  end
+
   describe "refresh_cache/0" do
     test "repopulates without deleting the named table" do
       tid_before = :ets.whereis(:moderation_rules)
