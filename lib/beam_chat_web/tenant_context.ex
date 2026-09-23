@@ -20,6 +20,7 @@ defmodule BeamChatWeb.TenantContext do
   See CATEGORY_REDESIGN.md §3.6 / §4.3.
   """
 
+  alias BeamChat.Authorization.Scope
   alias BeamChat.Repo
   alias BeamChat.Tenants
 
@@ -27,34 +28,34 @@ defmodule BeamChatWeb.TenantContext do
   LiveView `on_mount` callback. Matches the signature
   `on_mount(arg, params, session, socket)`.
 
-  If `socket.assigns.current_user` is present, resolves the active tenant and
-  stores it on the process so `Repo.scoped/1` can re-apply the RLS GUCs.
-  Returns `{:cont, socket}` in all cases (we never halt the mount here).
+  If `socket.assigns.current_user` is present, resolves the active tenant,
+  stores it on the process so `Repo.scoped/1` can re-apply the RLS GUCs,
+  and builds the `:current_scope` assign consumed by
+  `BeamChat.Authorization` permission checks. Returns `{:cont, socket}`
+  in all cases (we never halt the mount here).
   """
   def on_mount(_arg, _params, session, socket) do
-    socket =
-      case socket.assigns[:current_user] do
-        nil ->
-          socket
+    case socket.assigns[:current_user] do
+      nil ->
+        {:cont, socket}
 
-        user ->
-          tenants = Tenants.list_tenants_for_user(user)
+      user ->
+        tenants = Tenants.list_tenants_for_user(user)
 
-          case tenants do
-            [] ->
-              socket
+        active =
+          Enum.find(tenants, &(&1.id == session_active_tenant_id(session))) ||
+            List.first(tenants)
 
-            tenants ->
-              active =
-                Enum.find(tenants, &(&1.id == session_active_tenant_id(session))) ||
-                  List.first(tenants)
-
-              Repo.set_tenant_context(active.id, user.id)
-              Phoenix.Component.assign(socket, :active_tenant, active)
+        socket =
+          if active do
+            Repo.set_tenant_context(active.id, user.id)
+            Phoenix.Component.assign(socket, :active_tenant, active)
+          else
+            socket
           end
-      end
 
-    {:cont, socket}
+        {:cont, Phoenix.Component.assign(socket, :current_scope, Scope.for_user(user, active))}
+    end
   end
 
   defp session_active_tenant_id(session) when is_map(session) do
@@ -75,6 +76,9 @@ defmodule BeamChatWeb.Plug.TenantContext do
   """
   @behaviour Plug
 
+  import Plug.Conn
+
+  alias BeamChat.Authorization.Scope
   alias BeamChat.Repo
   alias BeamChat.Tenants
 
@@ -90,11 +94,11 @@ defmodule BeamChatWeb.Plug.TenantContext do
 
         case tenants do
           [] ->
-            conn
+            assign(conn, :current_scope, Scope.for_user(user, nil))
 
           [active | _] ->
             Repo.set_tenant_context(active.id, user.id)
-            conn
+            assign(conn, :current_scope, Scope.for_user(user, active))
         end
     end
   end
