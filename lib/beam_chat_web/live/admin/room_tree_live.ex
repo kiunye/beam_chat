@@ -21,6 +21,7 @@ defmodule BeamChatWeb.RoomTreeLive do
   require Logger
 
   alias BeamChat.Accounts.User
+  alias BeamChat.Audit
   alias BeamChat.Authorization
   alias BeamChat.Authorization.Scope
   alias BeamChat.Repo
@@ -140,7 +141,15 @@ defmodule BeamChatWeb.RoomTreeLive do
       "owner_id" => user.id
     }
 
-    case Repo.with_tenant(tenant.id, user.id, fn -> Rooms.create_room(attrs) end) do
+    result =
+      Repo.with_tenant(tenant.id, user.id, fn ->
+        with {:ok, room} <- Rooms.create_room(attrs),
+             {:ok, _audit} <- Audit.log(user, "room.created", room, %{tenant_id: tenant.id}) do
+          {:ok, room}
+        end
+      end)
+
+    case result do
       {:ok, _room} ->
         socket =
           socket

@@ -47,6 +47,19 @@ defmodule BeamChatWeb.Router do
       live "/admin/rooms", RoomTreeLive, :index
     end
 
+    # Permission-gated admin surface. The on_mount hooks run in order:
+    # authenticate, resolve the tenant context (which builds
+    # `:current_scope`), then require the permission against that scope.
+    live_session :tenant_manage,
+      on_mount: [
+        {BeamChatWeb.UserAuthLive, :require_authenticated},
+        {BeamChatWeb.TenantContext, :default},
+        {BeamChatWeb.Authorization, {:require_permission, :tenant_manage}}
+      ],
+      layout: {BeamChatWeb.Layouts, :app} do
+      live "/admin/members", MemberAdminLive, :index
+    end
+
     get "/payments/paystack/return", PaystackReturnController, :show
   end
 

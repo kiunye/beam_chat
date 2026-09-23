@@ -44,6 +44,11 @@ defmodule BeamChatWeb.RoomTreeLiveTest do
       assert Repo.with_tenant(tenant.id, admin.id, fn ->
                Repo.exists?(from r in Room, where: r.slug == ^slug)
              end)
+
+      # Room creation is audited atomically with the insert itself.
+      [audit] = BeamChat.Audit.list_recent(action: "room.created", limit: 1)
+      assert audit.actor_id == admin.id
+      assert audit.tenant_id == tenant.id
     end
 
     test "forged save event from a plain member is denied and no room is created", %{conn: conn} do

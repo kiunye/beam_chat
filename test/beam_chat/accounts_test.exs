@@ -62,6 +62,23 @@ defmodule BeamChat.AccountsTest do
       assert banned.is_banned == true
     end
 
+    test "ban and unban write audit rows" do
+      admin = user_fixture(%{role: "admin"})
+      user = registered_user_fixture()
+
+      assert {:ok, _} = Accounts.ban_user(admin, user, "audit probe")
+      assert {:ok, _} = Accounts.unban_user(admin, user)
+
+      [ban] = BeamChat.Audit.list_recent(action: "user.banned", limit: 1)
+      assert ban.actor_id == admin.id
+      assert ban.target_id == user.id
+      assert ban.metadata["reason"] == "audit probe"
+
+      [unban] = BeamChat.Audit.list_recent(action: "user.unbanned", limit: 1)
+      assert unban.actor_id == admin.id
+      assert unban.target_id == user.id
+    end
+
     test "forbids an actor without the :user_ban permission and leaves the target untouched" do
       member = user_fixture(%{role: "member"})
       user = registered_user_fixture()
@@ -69,10 +86,47 @@ defmodule BeamChat.AccountsTest do
 
       assert {:error, :forbidden} = Accounts.ban_user(member, user, "grudge")
 
-      # Nothing changed: the user is not banned and the session token still resolves.
+      # Nothing changed: the user is not banned, the session token still
+      # resolves, and no audit row was written for the denied action.
       reloaded = Accounts.get_user(user.id)
       assert reloaded.is_banned == false
       assert Accounts.get_user_by_session_token(raw) != nil
+      assert BeamChat.Audit.list_recent(action: "user.banned", limit: 1) == []
+    end
+  end
+
+  describe "set_global_role/3" do
+    test "a global admin can change a user's role and the change is audited" do
+      admin = user_fixture(%{role: "admin"})
+      user = registered_user_fixture()
+
+      assert {:ok, updated} = Accounts.set_global_role(admin, user, "moderator")
+      assert updated.role == "moderator"
+
+      [audit] = BeamChat.Audit.list_recent(action: "user.role_changed", limit: 1)
+      assert audit.actor_id == admin.id
+      assert audit.target_id == user.id
+      assert audit.metadata["from"] == "member"
+      assert audit.metadata["to"] == "moderator"
+    end
+
+    test "refuses to change your own global role (lockout protection)" do
+      admin = user_fixture(%{role: "admin"})
+      assert {:error, :self_role_change} = Accounts.set_global_role(admin, admin, "member")
+    end
+
+    test "refuses unknown roles" do
+      admin = user_fixture(%{role: "admin"})
+      user = registered_user_fixture()
+
+      assert {:error, :invalid_role} = Accounts.set_global_role(admin, user, "superuser")
+    end
+
+    test "forbids actors without the :user_manage_roles permission" do
+      moderator = user_fixture(%{role: "moderator"})
+      user = registered_user_fixture()
+
+      assert {:error, :forbidden} = Accounts.set_global_role(moderator, user, "admin")
     end
   end
 
