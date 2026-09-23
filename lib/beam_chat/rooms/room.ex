@@ -29,6 +29,8 @@ defmodule BeamChat.Rooms.Room do
     timestamps(type: :utc_datetime)
   end
 
+  @type t :: %__MODULE__{}
+
   def changeset(room, attrs) do
     room =
       room

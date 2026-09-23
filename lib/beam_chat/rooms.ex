@@ -257,6 +257,27 @@ defmodule BeamChat.Rooms do
     end)
   end
 
+  @doc """
+  The user's role in a room (`"owner"` | `"moderator"` | `"member"`), or
+  `nil` when the user holds no membership. Runs under the request's tenant
+  context via `Repo.scoped/1` (the `room_members` table is RLS-protected).
+
+  Consumed by `BeamChat.Authorization.can?/3` for room-context permission
+  checks; unlike `room_member?/2` it returns the role itself so the full
+  permission bundle can be resolved.
+  """
+  @spec room_member_role(Ecto.UUID.t(), Ecto.UUID.t()) :: String.t() | nil
+  def room_member_role(room_id, user_id)
+      when is_binary(room_id) and is_binary(user_id) do
+    Repo.scoped(fn ->
+      from(rm in RoomMember,
+        where: rm.room_id == ^room_id and rm.user_id == ^user_id,
+        select: rm.role
+      )
+      |> Repo.one()
+    end)
+  end
+
   def active_subscription?(room_id, user_id) do
     Repo.scoped(fn ->
       now = DateTime.utc_now(:second)
