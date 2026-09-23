@@ -7,6 +7,10 @@ defmodule BeamChat.Tenants do
   """
   import Ecto.Query, warn: false
 
+  alias BeamChat.Accounts.User
+  alias BeamChat.Audit
+  alias BeamChat.Authorization
+  alias BeamChat.Authorization.Scope
   alias BeamChat.Repo
   alias BeamChat.Tenants.Tenant
   alias BeamChat.Tenants.TenantMember
@@ -57,11 +61,25 @@ defmodule BeamChat.Tenants do
   end
 
   @doc """
-  Remove a user's membership from a tenant. Returns `{:ok, member}` on
-  success, `{:error, :not_found}` if no such membership exists, or
+  Remove a user's membership from a tenant.
+
+  The acting user must hold the `:tenant_manage` permission for the
+  tenant (or globally). Returns `{:ok, member}` on success,
+  `{:error, :forbidden}` when the actor lacks the permission,
+  `{:error, :not_found}` if no such membership exists, or
   `{:error, changeset}` if the delete fails.
+
+  Removing your own membership is allowed — a global admin can re-add you
+  afterwards, so it is not a lockout risk.
   """
-  def remove_member(tenant_or_id, user_or_id) do
+  def remove_member(%User{} = actor, tenant_or_id, user_or_id) do
+    with {:ok, tenant} <- fetch_managed_tenant(tenant_or_id),
+         :ok <- ensure_can_manage(actor, tenant) do
+      do_remove_member(tenant_or_id, user_or_id, actor)
+    end
+  end
+
+  defp do_remove_member(tenant_or_id, user_or_id, actor) do
     tenant_id = resolve_id(tenant_or_id)
     user_id = resolve_id(user_or_id)
 
@@ -70,7 +88,115 @@ defmodule BeamChat.Tenants do
         {:error, :not_found}
 
       member ->
-        Repo.delete(member)
+        case Repo.delete(member) do
+          {:ok, deleted} ->
+            {:ok, _} =
+              Audit.log(actor, "tenant_member.removed", deleted, %{
+                tenant_id: tenant_id,
+                user_id: user_id
+              })
+
+            {:ok, deleted}
+
+          {:error, _} = err ->
+            err
+        end
+    end
+  end
+
+  @doc """
+  Change a member's role within a tenant (`"admin"` <-> `"member"`).
+
+  The acting user must hold the `:tenant_manage` permission for the
+  tenant (or globally). Tenant admins may demote themselves — the action
+  is recoverable by a global admin, so self-demotion is a choice, not a
+  lockout.
+
+  Returns `{:ok, member}` or `{:error, :forbidden | :not_found | :invalid_role | changeset}`.
+  """
+  @spec set_member_role(struct(), struct() | Ecto.UUID.t(), struct() | Ecto.UUID.t(), String.t()) ::
+          {:ok, TenantMember.t()}
+          | {:error, :forbidden | :not_found | :invalid_role | Ecto.Changeset.t()}
+  def set_member_role(%User{} = actor, tenant_or_id, user_or_id, role)
+      when role in ~w(admin member) do
+    with {:ok, tenant} <- fetch_managed_tenant(tenant_or_id),
+         :ok <- ensure_can_manage(actor, tenant) do
+      do_set_member_role(tenant_or_id, user_or_id, role, actor)
+    end
+  end
+
+  def set_member_role(%User{}, _tenant_or_id, _user_or_id, _role), do: {:error, :invalid_role}
+
+  defp do_set_member_role(tenant_or_id, user_or_id, role, actor) do
+    tenant_id = resolve_id(tenant_or_id)
+    user_id = resolve_id(user_or_id)
+
+    case Repo.get_by(TenantMember, tenant_id: tenant_id, user_id: user_id) do
+      nil ->
+        {:error, :not_found}
+
+      %TenantMember{} = member ->
+        member
+        |> TenantMember.changeset(%{role: role})
+        |> Repo.update()
+        |> case do
+          {:ok, updated} = ok ->
+            {:ok, _} =
+              Audit.log(actor, "tenant_member.role_changed", updated, %{
+                user_id: user_id,
+                from: member.role,
+                to: role
+              })
+
+            ok
+
+          {:error, _} = err ->
+            err
+        end
+    end
+  end
+
+  @doc """
+  List the members of a tenant with their user display fields, ordered by
+  username. For the member-management admin UI.
+  """
+  @spec list_members(struct() | Ecto.UUID.t()) :: [map()]
+  def list_members(tenant_or_id) do
+    tenant_id = resolve_id(tenant_or_id)
+
+    Repo.all(
+      from(tm in TenantMember,
+        join: u in User,
+        on: u.id == tm.user_id,
+        where: tm.tenant_id == ^tenant_id,
+        order_by: [asc: u.username],
+        select: %{
+          id: tm.id,
+          user_id: u.id,
+          username: u.username,
+          full_name: u.full_name,
+          role: tm.role,
+          is_banned: u.is_banned,
+          joined_at: tm.inserted_at
+        }
+      )
+    )
+  end
+
+  # Load the tenant struct for a permission check; :not_found keeps the
+  # error uniform with the membership lookups below.
+  defp fetch_managed_tenant(tenant_or_id) do
+    case get_tenant(resolve_id(tenant_or_id)) do
+      %Tenant{} = tenant -> {:ok, tenant}
+      nil -> {:error, :not_found}
+    end
+  end
+
+  defp ensure_can_manage(%User{} = actor, %Tenant{} = tenant) do
+    if Authorization.can?(Scope.for_user(actor, tenant), :tenant_manage) do
+      :ok
+    else
+      {:error, :forbidden}
     end
   end
 

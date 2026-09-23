@@ -8,6 +8,7 @@ defmodule BeamChat.Wallet do
   import Ecto.Query
 
   alias BeamChat.Accounts.User
+  alias BeamChat.Audit
   alias BeamChat.Authorization
   alias BeamChat.Authorization.Scope
   alias BeamChat.Payments.GroupSubscription
@@ -89,16 +90,28 @@ defmodule BeamChat.Wallet do
     description = "Manual credit: #{note}"
 
     Repo.transaction(fn ->
-      rollback_or_pair(
-        apply_credit_rows(
-          acquire_wallet_lock!(target_user_id),
-          amount,
-          description,
-          "internal",
-          nil,
-          %{manual: true, actor_id: actor.id}
+      {wallet, txn} =
+        rollback_or_pair(
+          apply_credit_rows(
+            acquire_wallet_lock!(target_user_id),
+            amount,
+            description,
+            "internal",
+            nil,
+            %{manual: true, actor_id: actor.id}
+          )
         )
-      )
+
+      # Inside the credit transaction: the audit row commits only if the
+      # balance change does, and vice versa.
+      {:ok, _} =
+        Audit.log(actor, "wallet.manual_credit", txn, %{
+          amount: Decimal.to_string(amount),
+          target_user_id: target_user_id,
+          note: note
+        })
+
+      {wallet, txn}
     end)
     |> case do
       {:ok, {wallet, txn}} -> {:ok, wallet, txn}

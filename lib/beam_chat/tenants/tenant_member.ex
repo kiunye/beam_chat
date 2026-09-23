@@ -18,6 +18,8 @@ defmodule BeamChat.Tenants.TenantMember do
     timestamps(type: :utc_datetime)
   end
 
+  @type t :: %__MODULE__{}
+
   @doc "Default changeset for creating/updating tenant memberships."
   def changeset(member, attrs) do
     member

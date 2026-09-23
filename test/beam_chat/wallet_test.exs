@@ -163,6 +163,21 @@ defmodule BeamChat.WalletTest do
 
       Application.put_env(:beam_chat, :allow_dev_wallet_credit, prev)
     end
+
+    test "the credit is audited with the transaction it created" do
+      admin = user_fixture(%{role: "admin"})
+      target = user_fixture()
+      {:ok, _} = Wallet.ensure_wallet(target.id)
+
+      assert {:ok, _wallet, txn} =
+               Wallet.manual_credit(admin, target.id, Decimal.new("5.00"), "audit grant")
+
+      [audit] = BeamChat.Audit.list_recent(action: "wallet.manual_credit", limit: 1)
+      assert audit.actor_id == admin.id
+      assert audit.target_id == txn.id
+      assert audit.metadata["amount"] == "5.00"
+      assert audit.metadata["target_user_id"] == target.id
+    end
   end
 
   describe "expire_subscriptions/0" do

@@ -4,6 +4,7 @@ defmodule BeamChat.Accounts do
   import Ecto.Query
 
   alias BeamChat.Accounts.{User, UserToken}
+  alias BeamChat.Audit
   alias BeamChat.AuthEmail
   alias BeamChat.Authorization
   alias BeamChat.Authorization.Scope
@@ -242,13 +243,13 @@ defmodule BeamChat.Accounts do
   """
   def ban_user(%User{} = actor, %User{} = user, reason \\ nil) do
     with :ok <- ensure_can_ban(actor) do
-      do_ban_user(user, reason)
+      do_ban_user(actor, user, reason)
     end
   end
 
-  defp do_ban_user(%User{id: user_id}, reason) when is_binary(user_id) do
+  defp do_ban_user(%User{} = actor, %User{} = target, reason) do
     Repo.transaction(fn ->
-      user = Repo.get!(User, user_id)
+      user = Repo.get!(User, target.id)
 
       changeset =
         user
@@ -256,7 +257,8 @@ defmodule BeamChat.Accounts do
         |> Ecto.Changeset.put_change(:ban_reason, reason)
 
       with {:ok, updated} <- Repo.update(changeset),
-           {:ok, _count} <- delete_user_tokens(user_id) do
+           {:ok, _count} <- delete_user_tokens(user.id),
+           {:ok, _audit} <- Audit.log(actor, "user.banned", updated, %{reason: reason}) do
         updated
       else
         {:error, reason} -> Repo.rollback(reason)
@@ -276,26 +278,80 @@ defmodule BeamChat.Accounts do
   """
   def unban_user(%User{} = actor, %User{} = user) do
     with :ok <- ensure_can_ban(actor) do
-      do_unban_user(user)
+      do_unban_user(actor, user)
     end
   end
 
-  defp do_unban_user(%User{id: user_id}) when is_binary(user_id) do
+  defp do_unban_user(%User{} = actor, %User{id: user_id}) when is_binary(user_id) do
     case Repo.get(User, user_id) do
       nil ->
         {:error, :not_found}
 
       user ->
-        user
-        |> Ecto.Changeset.change(is_banned: false, ban_reason: nil)
-        |> Repo.update()
+        case user |> Ecto.Changeset.change(is_banned: false, ban_reason: nil) |> Repo.update() do
+          {:ok, unbanned} = ok ->
+            {:ok, _} = Audit.log(actor, "user.unbanned", unbanned, %{})
+            ok
+
+          {:error, _} = err ->
+            err
+        end
     end
   end
+
+  @doc """
+  Change a user's global platform role (`"member"` | `"moderator"` | `"admin"`).
+
+  The acting user must hold the `:user_manage_roles` permission (global
+  admins only — see `BeamChat.Authorization.Roles`). Changing your own
+  global role is refused: a sole admin demoting themselves (or promoting
+  someone and demoting later) can strand the platform without any
+  global admin, and there is no higher level to recover from.
+
+  Returns `{:ok, user}` or
+  `{:error, :forbidden | :self_role_change | :invalid_role | changeset}`.
+  """
+  @spec set_global_role(User.t(), User.t(), String.t()) ::
+          {:ok, User.t()}
+          | {:error, :forbidden | :self_role_change | :invalid_role | Ecto.Changeset.t()}
+  def set_global_role(%User{id: actor_id} = actor, %User{id: target_id} = target, role)
+      when role in ~w(member moderator admin) and actor_id != target_id do
+    with :ok <- ensure_can_manage_roles(actor) do
+      target
+      |> Ecto.Changeset.change(role: role)
+      |> Ecto.Changeset.validate_inclusion(:role, ~w(member moderator admin))
+      |> Repo.update()
+      |> case do
+        {:ok, updated} = ok ->
+          {:ok, _} =
+            Audit.log(actor, "user.role_changed", updated, %{from: target.role, to: role})
+
+          ok
+
+        {:error, _} = err ->
+          err
+      end
+    end
+  end
+
+  def set_global_role(%User{} = actor, %User{} = target, role)
+      when actor.id == target.id and role in ~w(member moderator admin),
+      do: {:error, :self_role_change}
+
+  def set_global_role(%User{}, %User{}, _role), do: {:error, :invalid_role}
 
   # Banning is a global platform action, so the actor's global role decides
   # (tenant roles grant no `:user_ban` — see the Roles catalogue).
   defp ensure_can_ban(%User{} = actor) do
     if Authorization.can?(Scope.for_user(actor, nil), :user_ban) do
+      :ok
+    else
+      {:error, :forbidden}
+    end
+  end
+
+  defp ensure_can_manage_roles(%User{} = actor) do
+    if Authorization.can?(Scope.for_user(actor, nil), :user_manage_roles) do
       :ok
     else
       {:error, :forbidden}
