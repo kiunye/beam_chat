@@ -8,12 +8,13 @@ defmodule BeamChat.AccountsTest do
   alias BeamChat.Accounts.User
   alias BeamChat.Repo
 
-  describe "ban_user/2" do
+  describe "ban_user/3" do
     test "sets is_banned and clears all session tokens in a single transaction" do
+      admin = user_fixture(%{role: "admin"})
       user = registered_user_fixture()
       raw = Accounts.generate_user_session_token(user)
 
-      assert {:ok, banned} = Accounts.ban_user(user, "spam")
+      assert {:ok, banned} = Accounts.ban_user(admin, user, "spam")
       assert banned.is_banned == true
       assert banned.ban_reason == "spam"
 
@@ -27,56 +28,91 @@ defmodule BeamChat.AccountsTest do
     end
 
     test "banning twice is idempotent and still returns ok" do
+      admin = user_fixture(%{role: "admin"})
       user = registered_user_fixture()
-      assert {:ok, _} = Accounts.ban_user(user)
-      assert {:ok, _} = Accounts.ban_user(user, "again")
+      assert {:ok, _} = Accounts.ban_user(admin, user)
+      assert {:ok, _} = Accounts.ban_user(admin, user, "again")
     end
 
     test "ban with a nil reason is allowed" do
+      admin = user_fixture(%{role: "admin"})
       user = registered_user_fixture()
-      assert {:ok, banned} = Accounts.ban_user(user, nil)
+      assert {:ok, banned} = Accounts.ban_user(admin, user, nil)
       assert banned.is_banned == true
       assert banned.ban_reason == nil
     end
 
     test "magic link tokens are also invalidated by ban" do
+      admin = user_fixture(%{role: "admin"})
       user = registered_user_fixture()
       assert :ok = Accounts.deliver_magic_link_instructions(user.email)
 
-      assert {:ok, _} = Accounts.ban_user(user)
+      assert {:ok, _} = Accounts.ban_user(admin, user)
 
       # No token rows remain for this user, regardless of context.
       remaining = Repo.all(from t in BeamChat.Accounts.UserToken, where: t.user_id == ^user.id)
       assert remaining == []
     end
+
+    test "a moderator (also holding :user_ban) can ban" do
+      moderator = user_fixture(%{role: "moderator"})
+      user = registered_user_fixture()
+
+      assert {:ok, banned} = Accounts.ban_user(moderator, user, "abuse")
+      assert banned.is_banned == true
+    end
+
+    test "forbids an actor without the :user_ban permission and leaves the target untouched" do
+      member = user_fixture(%{role: "member"})
+      user = registered_user_fixture()
+      raw = Accounts.generate_user_session_token(user)
+
+      assert {:error, :forbidden} = Accounts.ban_user(member, user, "grudge")
+
+      # Nothing changed: the user is not banned and the session token still resolves.
+      reloaded = Accounts.get_user(user.id)
+      assert reloaded.is_banned == false
+      assert Accounts.get_user_by_session_token(raw) != nil
+    end
   end
 
-  describe "unban_user/1" do
+  describe "unban_user/2" do
     test "clears the ban flag" do
+      admin = user_fixture(%{role: "admin"})
       user = registered_user_fixture()
-      {:ok, _} = Accounts.ban_user(user, "abuse")
+      {:ok, _} = Accounts.ban_user(admin, user, "abuse")
 
-      assert {:ok, unbanned} = Accounts.unban_user(user)
+      assert {:ok, unbanned} = Accounts.unban_user(admin, user)
       assert unbanned.is_banned == false
       assert unbanned.ban_reason == nil
     end
 
     test "does not resurrect old session tokens — user must re-authenticate" do
+      admin = user_fixture(%{role: "admin"})
       user = registered_user_fixture()
       raw = Accounts.generate_user_session_token(user)
-      {:ok, _} = Accounts.ban_user(user)
+      {:ok, _} = Accounts.ban_user(admin, user)
 
       # Token is gone after ban.
       assert Accounts.get_user_by_session_token(raw) == nil
 
       # Unban does not magically restore it.
-      {:ok, _} = Accounts.unban_user(user)
+      {:ok, _} = Accounts.unban_user(admin, user)
       assert Accounts.get_user_by_session_token(raw) == nil
     end
 
+    test "forbids an actor without the :user_ban permission" do
+      member = user_fixture(%{role: "member"})
+      user = registered_user_fixture()
+
+      assert {:error, :forbidden} = Accounts.unban_user(member, user)
+    end
+
     test "returns error for unknown user id" do
+      admin = user_fixture(%{role: "admin"})
+
       assert {:error, :not_found} =
-               Accounts.unban_user(%User{id: Ecto.UUID.generate()})
+               Accounts.unban_user(admin, %User{id: Ecto.UUID.generate()})
     end
   end
 

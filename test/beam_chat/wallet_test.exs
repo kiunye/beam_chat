@@ -149,6 +149,20 @@ defmodule BeamChat.WalletTest do
 
       Application.put_env(:beam_chat, :allow_dev_wallet_credit, prev)
     end
+
+    test "forbids moderator — wallet credit is a global admin power" do
+      prev = Application.get_env(:beam_chat, :allow_dev_wallet_credit)
+      Application.put_env(:beam_chat, :allow_dev_wallet_credit, false)
+
+      moderator = user_fixture(%{role: "moderator"})
+      target = user_fixture()
+      {:ok, _} = Wallet.ensure_wallet(target.id)
+
+      assert {:error, :forbidden} =
+               Wallet.manual_credit(moderator, target.id, Decimal.new("1.00"), "nope")
+
+      Application.put_env(:beam_chat, :allow_dev_wallet_credit, prev)
+    end
   end
 
   describe "expire_subscriptions/0" do

@@ -5,6 +5,8 @@ defmodule BeamChat.Accounts do
 
   alias BeamChat.Accounts.{User, UserToken}
   alias BeamChat.AuthEmail
+  alias BeamChat.Authorization
+  alias BeamChat.Authorization.Scope
   alias BeamChat.Mailer
   alias BeamChat.Repo
 
@@ -228,13 +230,23 @@ defmodule BeamChat.Accounts do
   @doc """
   Bans a user and invalidates all active sessions/magic-link tokens atomically.
 
+  The acting user must hold the `:user_ban` permission (see
+  `BeamChat.Authorization.Roles`); otherwise returns `{:error, :forbidden}`
+  without touching the target user.
+
   Returns `{:ok, user}` with the refreshed user struct, or `{:error, changeset}`.
   After this call, any cookie previously held by `user_id` is dead: the
   `users_tokens` rows are gone, so `get_user_by_session_token/1` will return `nil`,
   and the `BeamChatWeb.UserAuth.fetch_current_user` plug will treat the request
   as logged out (defence in depth, since `is_banned: true` also short-circuits).
   """
-  def ban_user(%User{id: user_id}, reason \\ nil) when is_binary(user_id) do
+  def ban_user(%User{} = actor, %User{} = user, reason \\ nil) do
+    with :ok <- ensure_can_ban(actor) do
+      do_ban_user(user, reason)
+    end
+  end
+
+  defp do_ban_user(%User{id: user_id}, reason) when is_binary(user_id) do
     Repo.transaction(fn ->
       user = Repo.get!(User, user_id)
 
@@ -259,8 +271,16 @@ defmodule BeamChat.Accounts do
   @doc """
   Clears the ban flag on a user. Tokens are not restored — the user simply
   re-authenticates via password, magic link, OAuth, or SSO. `ban_reason` is cleared.
+
+  Gated on the same `:user_ban` permission as `ban_user/3`.
   """
-  def unban_user(%User{id: user_id}) when is_binary(user_id) do
+  def unban_user(%User{} = actor, %User{} = user) do
+    with :ok <- ensure_can_ban(actor) do
+      do_unban_user(user)
+    end
+  end
+
+  defp do_unban_user(%User{id: user_id}) when is_binary(user_id) do
     case Repo.get(User, user_id) do
       nil ->
         {:error, :not_found}
@@ -269,6 +289,16 @@ defmodule BeamChat.Accounts do
         user
         |> Ecto.Changeset.change(is_banned: false, ban_reason: nil)
         |> Repo.update()
+    end
+  end
+
+  # Banning is a global platform action, so the actor's global role decides
+  # (tenant roles grant no `:user_ban` — see the Roles catalogue).
+  defp ensure_can_ban(%User{} = actor) do
+    if Authorization.can?(Scope.for_user(actor, nil), :user_ban) do
+      :ok
+    else
+      {:error, :forbidden}
     end
   end
 

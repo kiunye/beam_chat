@@ -8,6 +8,8 @@ defmodule BeamChat.Wallet do
   import Ecto.Query
 
   alias BeamChat.Accounts.User
+  alias BeamChat.Authorization
+  alias BeamChat.Authorization.Scope
   alias BeamChat.Payments.GroupSubscription
   alias BeamChat.Repo
   alias BeamChat.Rooms.Room
@@ -71,7 +73,10 @@ defmodule BeamChat.Wallet do
   end
 
   @doc """
-  Staff (admin/moderator) or dev-config may add test credits to another user's wallet.
+  Global admins (the `:wallet_credit` permission) or dev-config may add test
+  credits to another user's wallet. Wallets are platform-global, so tenant
+  roles deliberately grant no credit power — the check runs against the
+  actor's global role only.
   """
   def manual_credit(%User{} = actor, target_user_id, %Decimal{} = amount, note)
       when is_binary(target_user_id) and is_binary(note) do
@@ -113,7 +118,8 @@ defmodule BeamChat.Wallet do
   end
 
   defp allowed_manual_credit?(%User{} = actor) do
-    User.staff?(actor) or dev_wallet_credit_allowed?()
+    Authorization.can?(Scope.for_user(actor, nil), :wallet_credit) or
+      dev_wallet_credit_allowed?()
   end
 
   # Dev-only escape hatch: `dev.exs` sets `allow_dev_wallet_credit: true`.

@@ -2,14 +2,16 @@ defmodule BeamChatWeb.WalletLive.Index do
   use BeamChatWeb, :live_view
 
   alias BeamChat.Accounts
-  alias BeamChat.Accounts.User
+  alias BeamChat.Authorization
   alias BeamChat.Payments.ObanWorkers.MpesaStkWorker
   alias BeamChat.Payments.PaystackClient
   alias BeamChat.Wallet
 
-  # SECURITY_REVIEW.md P2 #20: same gate as Wallet.allowed_manual_credit?/1 —
-  # `:dev_wallet_credit_build` is false outside dev, so a stray prod config
-  # override can never surface the staff credit form.
+  # The staff credit form is shown when the current scope holds the
+  # `:wallet_credit` permission. SECURITY_REVIEW.md P2 #20: the same gate as
+  # `Wallet.allowed_manual_credit?/1` — `:dev_wallet_credit_build` is false
+  # outside dev, so a stray prod config override can never surface the staff
+  # credit form.
 
   # Page size for the recent-activity list (SECURITY_REVIEW.md P3 #23).
   @txn_page_size 20
@@ -30,12 +32,12 @@ defmodule BeamChatWeb.WalletLive.Index do
      |> assign(:paystack_form, to_form(%{"amount" => ""}, as: :paystack))
      |> assign(:mpesa_form, to_form(%{"amount" => "", "phone" => ""}, as: :mpesa))
      |> assign(:staff_form, to_form(%{"email" => "", "amount" => "", "note" => ""}, as: :staff))
-     |> assign(:show_staff_panel, show_staff_panel?(user))
+     |> assign(:show_staff_panel, show_staff_panel?(socket.assigns[:current_scope]))
      |> stream(:transactions, txns, dom_id: &("txn-" <> &1.id))}
   end
 
-  defp show_staff_panel?(%User{} = u) do
-    User.staff?(u) or dev_wallet_credit_allowed?()
+  defp show_staff_panel?(scope) do
+    Authorization.can?(scope, :wallet_credit) or dev_wallet_credit_allowed?()
   end
 
   defp dev_wallet_credit_allowed? do
