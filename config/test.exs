@@ -9,6 +9,7 @@ config :beam_chat, BeamChat.Repo,
   username: System.get_env("BEAMCHAT_DB_USERNAME", "beamchat_app"),
   password: System.get_env("BEAMCHAT_DB_PASSWORD", "beamchat_app"),
   hostname: System.get_env("PGHOST", "localhost"),
+  port: String.to_integer(System.get_env("PGPORT", "5432")),
   database: "beam_chat_test#{System.get_env("MIX_TEST_PARTITION")}",
   pool: Ecto.Adapters.SQL.Sandbox,
   pool_size: System.schedulers_online() * 2
