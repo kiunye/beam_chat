@@ -8,6 +8,13 @@ defmodule BeamChat.Moderation.RuleEngine do
   `refresh_cache/0` (called by the `BeamChat.Workers.RefreshModerationCache`
   Oban job). The message hot path never creates or reloads the table.
 
+  The GenServer also owns a second, `:public` named table
+  (`:moderation_rate_counters`) holding per-user fixed-window message
+  counters for `rate_limit` rules. It is `:public` so sender processes can
+  atomically bump counters on the hot path, and it is never wiped by cache
+  refreshes. Counters are lost (and therefore reset) whenever the GenServer
+  restarts.
+
   Rule config is normalized at cache-load time: `word_filter` word lists
   are validated and `pattern` regexes are compiled, with invalid entries
   skipped and logged. Boot still fails closed on schema-level database
@@ -26,6 +33,7 @@ defmodule BeamChat.Moderation.RuleEngine do
   require Logger
 
   @table :moderation_rules
+  @counters :moderation_rate_counters
   @rules_snapshot_key :rules_snapshot
 
   @type rule :: %{
@@ -69,6 +77,18 @@ defmodule BeamChat.Moderation.RuleEngine do
         read_concurrency: true,
         write_concurrency: true
       ])
+
+    # The rate-limit counters live in a separate, `:public` table: the message
+    # hot path runs in the sender's process and must bump counters directly
+    # (a `:protected` table only allows writes from the owning GenServer).
+    # Keeping them separate also means `load_rules_into_cache/1`'s
+    # `:ets.delete_all_objects/1` never wipes rate-limit state.
+    :ets.new(@counters, [
+      :named_table,
+      :public,
+      read_concurrency: true,
+      write_concurrency: true
+    ])
 
     _ = load_rules_into_cache(tid)
     {:ok, %{tid: tid}}
@@ -282,15 +302,19 @@ defmodule BeamChat.Moderation.RuleEngine do
   def apply_single_rule(
         %{
           type: "rate_limit",
-          config: %{max_count: _max_count, window_seconds: _window_seconds}
+          config: %{max_count: max_count, window_seconds: window_seconds}
         } = _rule,
-        %{user_id: _user_id} = message
+        %{user_id: user_id} = message
       ) do
-    # Rate limit rule: check if user exceeded message limit
-    # In a full implementation, we would use a sliding window counter
-    # For MVP, we'll use a simple approach with ETS or could use a dedicated counter
-    # For now, we'll allow all messages through (placeholder)
-    message
+    case :ets.whereis(@counters) do
+      :undefined ->
+        Logger.warning("moderation_rate_counters ETS table is missing; skipping rate limit rule")
+
+        message
+
+      _tid ->
+        rate_limit_check(message, user_id, max_count, window_seconds)
+    end
   end
 
   def apply_single_rule(
@@ -344,6 +368,34 @@ defmodule BeamChat.Moderation.RuleEngine do
   def apply_single_rule(_rule, message) do
     # Unknown rule type, allow message through
     message
+  end
+
+  # Fixed-window counter: `{user_id, :message_count}` maps to
+  # `{count, window_start_ms}`. Blocked messages do not increment the counter,
+  # so a user may send at most `max_count` messages per window. The lookup /
+  # reset race between concurrent senders is best-effort (the atomic
+  # `:ets.update_counter/3` prevents lost increments inside an active window).
+  defp rate_limit_check(message, user_id, max_count, window_seconds) do
+    key = {user_id, :message_count}
+    window_ms = :erlang.max(window_seconds, 0) * 1000
+    now = System.system_time(:millisecond)
+
+    case :ets.lookup(@counters, key) do
+      [{^key, count, window_start}] when now - window_start < window_ms and count >= max_count ->
+        {:blocked, message, "Rate limit exceeded: #{count}/#{max_count} messages"}
+
+      [{^key, _count, window_start}] when now - window_start < window_ms ->
+        _ = :ets.update_counter(@counters, key, {2, 1})
+        message
+
+      [{^key, _count, _expired_window_start}] ->
+        true = :ets.insert(@counters, {key, 1, now})
+        message
+
+      [] ->
+        true = :ets.insert(@counters, {key, 1, now})
+        message
+    end
   end
 
   # Tolerant matchers: direct callers may hand us raw (un-normalized) rule
