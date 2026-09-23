@@ -19,6 +19,8 @@ defmodule BeamChat.Authorization do
 
   alias BeamChat.Authorization.Roles
   alias BeamChat.Authorization.Scope
+  alias BeamChat.Rooms
+  alias BeamChat.Rooms.Room
 
   @doc """
   Whether `scope` holds `permission`.
@@ -33,6 +35,33 @@ defmodule BeamChat.Authorization do
 
   def can?(%Scope{} = scope, permission) when is_atom(permission),
     do: permission in permissions(scope)
+
+  @doc """
+  Context-aware check for permissions that depend on a specific room.
+
+      can?(scope, :room_message_delete, %{room: room})
+
+  Resolves the acting user's `room_members.role` for `room` and unions
+  the room-level permissions (`BeamChat.Authorization.Roles.room_permissions/1`)
+  with the scope's own global/tenant permissions — the same additive-union
+  semantics as `can?/2`.
+
+  Room membership is read from the database under the request's tenant
+  context, so this variant is for per-action checks (deleting a message,
+  opening a member-management dialog), not hot paths.
+
+  Without a `:room` in the context this degrades to `can?/2`.
+  """
+  @spec can?(Scope.t() | nil, Roles.permission(), %{room: Room.t()}) :: boolean()
+  def can?(nil, _permission, _context), do: false
+  def can?(%Scope{user: nil}, _permission, _context), do: false
+
+  def can?(%Scope{} = scope, permission, %{room: %Room{} = room})
+      when is_atom(permission) do
+    room_role = Rooms.room_member_role(room.id, Scope.user_id(scope))
+
+    can?(scope, permission) or permission in Roles.room_permissions(room_role)
+  end
 
   @doc """
   The union of permissions held by `scope`: global role permissions plus

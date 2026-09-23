@@ -136,4 +136,120 @@ defmodule BeamChat.AuthorizationTest do
       refute Authorization.can?(scope, :wallet_credit)
     end
   end
+
+  describe "Authorization.can?/3 with a room context" do
+    test "a room owner holds owner powers in their room" do
+      owner = user_fixture()
+      room = room_fixture(owner)
+
+      # `room_fixture/2` inserts only the room row; the owner membership is
+      # created by `Rooms.create_room/1` in production, so mirror it here.
+      room_member_fixture(room, owner, %{role: "owner"})
+
+      scope = Scope.for_user(owner, nil)
+
+      assert Authorization.can?(scope, :room_update, %{room: room})
+      assert Authorization.can?(scope, :room_delete, %{room: room})
+      assert Authorization.can?(scope, :room_manage_members, %{room: room})
+      assert Authorization.can?(scope, :room_message_delete, %{room: room})
+    end
+
+    test "a room moderator can moderate but cannot delete the room" do
+      owner = user_fixture()
+      moderator = user_fixture()
+      room = room_fixture(owner)
+      room_member_fixture(room, moderator, %{role: "moderator"})
+      scope = Scope.for_user(moderator, nil)
+
+      assert Authorization.can?(scope, :room_update, %{room: room})
+      assert Authorization.can?(scope, :room_manage_members, %{room: room})
+      assert Authorization.can?(scope, :room_message_delete, %{room: room})
+      refute Authorization.can?(scope, :room_delete, %{room: room})
+    end
+
+    test "a plain room member holds no room powers" do
+      owner = user_fixture()
+      member = user_fixture()
+      room = room_fixture(owner)
+      room_member_fixture(room, member)
+      scope = Scope.for_user(member, nil)
+
+      refute Authorization.can?(scope, :room_update, %{room: room})
+      refute Authorization.can?(scope, :room_delete, %{room: room})
+      refute Authorization.can?(scope, :room_message_delete, %{room: room})
+    end
+
+    test "a non-member of the room gets nothing from the room context" do
+      owner = user_fixture()
+      stranger = user_fixture()
+      room = room_fixture(owner)
+      scope = Scope.for_user(stranger, nil)
+
+      refute Authorization.can?(scope, :room_update, %{room: room})
+      refute Authorization.can?(scope, :room_message_delete, %{room: room})
+    end
+
+    test "room powers apply only within the room context" do
+      owner = user_fixture()
+      room = room_fixture(owner)
+      scope = Scope.for_user(owner, nil)
+
+      # Owner powers are room-scoped: no :room_create (a tenant-level
+      # permission) and no global powers fall out of the context.
+      refute Authorization.can?(scope, :room_create)
+      refute Authorization.can?(scope, :user_ban)
+      refute Authorization.can?(scope, :wallet_credit)
+    end
+
+    test "room role unions with the scope's global and tenant roles" do
+      moderator = user_fixture(%{role: "moderator"})
+      owner = user_fixture()
+      room = room_fixture(owner)
+      room_member_fixture(room, moderator, %{role: "member"})
+      scope = Scope.for_user(moderator, nil)
+
+      # The room context grants nothing extra (plain member), but the
+      # scope still carries the global moderator powers.
+      refute Authorization.can?(scope, :room_message_delete, %{room: room})
+      assert Authorization.can?(scope, :user_ban, %{room: room})
+    end
+
+    test "guest scopes are denied in room context too" do
+      owner = user_fixture()
+      room = room_fixture(owner)
+
+      refute Authorization.can?(nil, :room_message_delete, %{room: room})
+      refute Authorization.can?(Scope.for_user(nil, nil), :room_message_delete, %{room: room})
+    end
+  end
+
+  describe "Roles catalogue integrity" do
+    alias BeamChat.Authorization.Roles
+
+    test "every permission in the catalogue is declared in the type union" do
+      declared = [
+        :moderation_configure,
+        :room_create,
+        :room_delete,
+        :room_manage_members,
+        :room_message_delete,
+        :room_update,
+        :tenant_manage,
+        :user_ban,
+        :user_manage_roles,
+        :wallet_credit
+      ]
+
+      assert Enum.sort(declared) == Roles.all_permissions()
+    end
+
+    test "unknown roles at any level hold nothing" do
+      assert Roles.global_permissions("superuser") == []
+      assert Roles.tenant_permissions("superuser") == []
+      assert Roles.room_permissions("superuser") == []
+      assert Roles.global_permissions(nil) == []
+      assert Roles.tenant_permissions(nil) == []
+      assert Roles.room_permissions(nil) == []
+    end
+  end
 end
