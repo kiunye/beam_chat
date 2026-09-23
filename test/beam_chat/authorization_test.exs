@@ -229,6 +229,7 @@ defmodule BeamChat.AuthorizationTest do
     test "every permission in the catalogue is declared in the type union" do
       declared = [
         :moderation_configure,
+        :radio_manage,
         :room_create,
         :room_delete,
         :room_manage_members,
