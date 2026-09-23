@@ -19,6 +19,7 @@ defmodule BeamChat.Authorization.Roles do
   ## Permission vocabulary
 
     * `:moderation_configure` — manage moderation rules
+    * `:radio_manage`         — create, edit, start, and stop radio stations
     * `:room_create`          — create rooms in a tenant
     * `:room_update`          — edit room settings
     * `:room_delete`          — delete rooms
@@ -44,6 +45,7 @@ defmodule BeamChat.Authorization.Roles do
   @global_permissions %{
     "admin" => [
       :moderation_configure,
+      :radio_manage,
       :room_create,
       :room_delete,
       :room_manage_members,
@@ -59,6 +61,7 @@ defmodule BeamChat.Authorization.Roles do
 
   @tenant_permissions %{
     "admin" => [
+      :radio_manage,
       :room_create,
       :room_delete,
       :room_manage_members,
@@ -86,6 +89,7 @@ defmodule BeamChat.Authorization.Roles do
 
   @type permission ::
           :moderation_configure
+          | :radio_manage
           | :room_create
           | :room_delete
           | :room_manage_members

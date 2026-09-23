@@ -11,6 +11,7 @@ defmodule BeamChat.TestFixtures do
   alias BeamChat.Rooms.Room
   alias BeamChat.Rooms.RoomCategory
   alias BeamChat.Rooms.RoomMember
+  alias BeamChat.Streaming.RadioStation
   alias BeamChat.Tenants
   alias BeamChat.Tenants.Tenant
   alias BeamChat.Wallet.Wallet
@@ -162,6 +163,37 @@ defmodule BeamChat.TestFixtures do
     BeamChat.Repo.set_tenant_context(tenant_id, owner.id)
 
     room
+  end
+
+  @doc """
+  A radio station row in `tenant` (default: a pull-based URL source).
+  Inserts directly under the tenant GUCs — the RLS write policy checks
+  only the tenant match, and permission gating is exercised through the
+  `BeamChat.Streaming` context functions in the streaming tests.
+  """
+  def radio_station_fixture(tenant, attrs \\ %{}) do
+    suffix = unique_suffix()
+
+    attrs =
+      Map.merge(
+        %{
+          name: "Station " <> suffix,
+          slug: "station-" <> suffix,
+          source_type: "url",
+          source_url: "https://example.com/live/#{suffix}.m3u8"
+        },
+        attrs
+      )
+      |> Map.put_new(:tenant_id, tenant.id)
+
+    {:ok, station} =
+      Repo.with_tenant(tenant.id, tenant.id, fn ->
+        %RadioStation{tenant_id: tenant.id}
+        |> RadioStation.create_changeset(Map.delete(attrs, :tenant_id))
+        |> Repo.insert()
+      end)
+
+    station
   end
 
   def room_member_fixture(room, user, attrs \\ %{}) do
