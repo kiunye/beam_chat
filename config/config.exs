@@ -112,6 +112,17 @@ config :livekit,
   api_secret: System.get_env("LIVEKIT_API_SECRET", "secret"),
   url: System.get_env("LIVEKIT_URL", "ws://localhost:7880")
 
+# Webhook receiver: LiveKit signs each webhook with the same key pair. Must
+# be a map — `Livekit.WebhookReceiver` reads it with Map.get/2.
+config :livekit, :webhook, %{
+  api_key: System.get_env("LIVEKIT_API_KEY", "devkey"),
+  api_secret: System.get_env("LIVEKIT_API_SECRET", "secret")
+}
+
+# Radio streaming: the LiveKit Ingress boundary implementation. Tests swap
+# this for a process-local fake via Application.put_env/3.
+config :beam_chat, :ingress_client, BeamChat.Streaming.LiveKitIngress
+
 config :assent, :http_adapter, Assent.HTTPAdapter.Req
 
 # Configure the endpoint

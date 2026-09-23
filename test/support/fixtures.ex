@@ -170,6 +170,10 @@ defmodule BeamChat.TestFixtures do
   Inserts directly under the tenant GUCs — the RLS write policy checks
   only the tenant match, and permission gating is exercised through the
   `BeamChat.Streaming` context functions in the streaming tests.
+
+  `:ingress_id` and `:status` are runtime fields (never cast by the
+  changesets); when present in `attrs` they are applied with a direct
+  post-insert change so tests can seed in-flight station states.
   """
   def radio_station_fixture(tenant, attrs \\ %{}) do
     suffix = unique_suffix()
@@ -186,14 +190,27 @@ defmodule BeamChat.TestFixtures do
       )
       |> Map.put_new(:tenant_id, tenant.id)
 
+    runtime_changes = Map.take(attrs, [:ingress_id, :status])
+
     {:ok, station} =
       Repo.with_tenant(tenant.id, tenant.id, fn ->
         %RadioStation{tenant_id: tenant.id}
-        |> RadioStation.create_changeset(Map.delete(attrs, :tenant_id))
+        |> RadioStation.create_changeset(Map.drop(attrs, [:tenant_id, :ingress_id, :status]))
         |> Repo.insert()
       end)
 
-    station
+    apply_runtime_changes(station, runtime_changes, tenant)
+  end
+
+  defp apply_runtime_changes(station, changes, _tenant) when changes == %{}, do: station
+
+  defp apply_runtime_changes(station, changes, tenant) do
+    {:ok, updated} =
+      Repo.with_tenant(tenant.id, tenant.id, fn ->
+        station |> Ecto.Changeset.change(changes) |> Repo.update()
+      end)
+
+    updated
   end
 
   def room_member_fixture(room, user, attrs \\ %{}) do
