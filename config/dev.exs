@@ -14,6 +14,7 @@ else
     username: System.get_env("BEAMCHAT_DB_USERNAME", "beamchat_app"),
     password: System.get_env("BEAMCHAT_DB_PASSWORD", "beamchat_app"),
     hostname: "localhost",
+    port: String.to_integer(System.get_env("PGPORT", "5432")),
     database: "beam_chat_dev",
     stacktrace: true,
     show_sensitive_data_on_connection_error: true,
