@@ -60,6 +60,16 @@ defmodule BeamChatWeb.Router do
       live "/admin/members", MemberAdminLive, :index
     end
 
+    live_session :radio_manage,
+      on_mount: [
+        {BeamChatWeb.UserAuthLive, :require_authenticated},
+        {BeamChatWeb.TenantContext, :default},
+        {BeamChatWeb.Authorization, {:require_permission, :radio_manage}}
+      ],
+      layout: {BeamChatWeb.Layouts, :app} do
+      live "/admin/radio", RadioAdminLive, :index
+    end
+
     get "/payments/paystack/return", PaystackReturnController, :show
   end
 

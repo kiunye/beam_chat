@@ -190,12 +190,14 @@ defmodule BeamChat.TestFixtures do
       )
       |> Map.put_new(:tenant_id, tenant.id)
 
-    runtime_changes = Map.take(attrs, [:ingress_id, :status])
+    runtime_changes = Map.take(attrs, [:ingress_id, :status, :metadata])
 
     {:ok, station} =
       Repo.with_tenant(tenant.id, tenant.id, fn ->
         %RadioStation{tenant_id: tenant.id}
-        |> RadioStation.create_changeset(Map.drop(attrs, [:tenant_id, :ingress_id, :status]))
+        |> RadioStation.create_changeset(
+          Map.drop(attrs, [:tenant_id, :ingress_id, :status, :metadata])
+        )
         |> Repo.insert()
       end)
 
