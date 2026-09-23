@@ -175,6 +175,8 @@ if config_env() == :prod do
     api_secret: livekit_api_secret,
     url: livekit_url
 
+  config :livekit, :webhook, %{api_key: livekit_api_key, api_secret: livekit_api_secret}
+
   # ## Configuring the mailer
   #
   # In production you need to configure the mailer to use a different adapter.

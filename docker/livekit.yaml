@@ -1,0 +1,34 @@
+# Local development LiveKit server config.
+#
+# Replaces the `--dev` preset so the server runs against Redis, which the
+# Ingress service requires to register and receive work. Keys stay at the
+# dev defaults so the app's token generation is unchanged.
+#
+# Webhooks: LiveKit POSTs ingress lifecycle events to the app. The app runs
+# on the host during development, hence `host.docker.internal` (Docker
+# Desktop on Windows/macOS; on Linux add `--add-host=host.docker.internal:host-gateway`
+# to the livekit service or point at the host's IP).
+
+port: 7880
+bind_addresses:
+  - "0.0.0.0"
+
+keys:
+  devkey: secret
+
+redis:
+  address: redis:6379
+
+rtc:
+  tcp_port: 7881
+  port_range_start: 50100
+  port_range_end: 50200
+
+logging:
+  level: info
+
+webhook:
+  api_key: devkey
+  api_secret: secret
+  urls:
+    - http://host.docker.internal:4000/webhooks/livekit

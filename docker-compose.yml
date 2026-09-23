@@ -2,8 +2,11 @@
 # Run from this directory: docker compose up -d
 # Then: mix setup
 #
-# LiveKit runs with its `--dev` defaults (api_key=devkey, api_secret=secret),
-# which are mirrored in .env.example so the server can issue tokens.
+# LiveKit keeps the `--dev` key defaults (api_key=devkey, api_secret=secret),
+# but runs from docker/livekit.yaml instead of the `--dev` preset so it can
+# use Redis — required by the Ingress service that carries radio station
+# streams (see docker/ingress.yaml). Webhook callbacks point at the app on
+# the host via host.docker.internal.
 
 services:
   postgres:
@@ -22,15 +25,45 @@ services:
       timeout: 3s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   livekit:
     image: livekit/livekit-server:v1.13.5   # pinned to match docker-compose.swarm.yml (current stable, 2026-07-31)
-    command: --dev --bind 0.0.0.0
+    command: --config /etc/livekit.yaml --bind 0.0.0.0
+    volumes:
+      - ./docker/livekit.yaml:/etc/livekit.yaml:ro
     ports:
-      - "7880:7880"   # HTTP/WS signaling
+      - "7880:7880"   # HTTP/WS signaling (also server API / webhooks config)
       - "7881:7881"   # ICE/TCP
-      - "7882:7882/udp"  # ICE/UDP (media)
-    environment:
-      LIVEKIT_KEYS: "devkey: secret"
+      - "50100-50200:50100-50200/udp"  # ICE/UDP (media)
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # Ingress service: provisions external stream inputs (radio stations).
+  # NOTE: v1.5.0 is the last standalone image LiveKit published on Docker
+  # Hub; newer Ingress builds are LiveKit-Cloud-only or built from source
+  # (github.com/livekit/ingress). If it is incompatible with the server
+  # version above, build the worker from source or use LiveKit Cloud
+  # ingress in environments where radio streaming is required.
+  ingress:
+    image: livekit/ingress:v1.5.0
+    command: --config /etc/ingress.yaml
+    volumes:
+      - ./docker/ingress.yaml:/etc/ingress.yaml:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+      livekit:
+        condition: service_started
 
 volumes:
   beam_chat_pgdata:

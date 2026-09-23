@@ -92,6 +92,7 @@ defmodule BeamChatWeb.Router do
     pipe_through :api
 
     post "/paystack", PaystackWebhookController, :create
+    post "/livekit", LivekitWebhookController, :create
   end
 
   scope "/webhooks", BeamChatWeb.Webhooks, as: :webhooks do
