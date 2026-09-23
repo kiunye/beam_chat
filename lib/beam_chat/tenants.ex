@@ -75,6 +75,28 @@ defmodule BeamChat.Tenants do
   end
 
   @doc """
+  The user's membership role in the tenant (`"admin"` | `"member"`), or
+  `nil` when the user is not a member. Accepts either structs or raw ids
+  for either argument.
+
+  Unlike `admin?/2` this returns the role itself, so callers (e.g.
+  `BeamChat.Authorization.Scope.for_user/2`) can resolve the full
+  permission bundle rather than a single boolean.
+  """
+  @spec member_role(struct() | Ecto.UUID.t(), struct() | Ecto.UUID.t()) :: String.t() | nil
+  def member_role(tenant_or_id, user_or_id) do
+    tenant_id = resolve_id(tenant_or_id)
+    user_id = resolve_id(user_or_id)
+
+    Repo.one(
+      from(tm in TenantMember,
+        where: tm.tenant_id == ^tenant_id and tm.user_id == ^user_id,
+        select: tm.role
+      )
+    )
+  end
+
+  @doc """
   Boolean check: is the given user an `admin` of the given tenant?
   Accepts either structs or raw ids for either argument.
   """

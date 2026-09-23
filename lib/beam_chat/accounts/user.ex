@@ -27,6 +27,8 @@ defmodule BeamChat.Accounts.User do
     timestamps(type: :utc_datetime)
   end
 
+  @type t :: %__MODULE__{}
+
   @doc "General insert (e.g. tests, OAuth) without password handling."
   def create_changeset(user, attrs) do
     user
