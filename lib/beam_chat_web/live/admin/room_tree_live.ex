@@ -6,6 +6,10 @@ defmodule BeamChatWeb.RoomTreeLive do
   full tree and may create sub-rooms; non-admins see only the rooms they are
   explicitly granted via `BeamChat.Rooms.AccessPolicy` (CATEGORY_REDESIGN.md §4.6 / D5).
 
+  Authorization is enforced server-side in the event handlers via
+  `BeamChat.Authorization.can?/2` (`:room_create`) — the hidden create form is
+  a UI nicety, never the gate.
+
   `current_user` is provided by the `:require_authenticated` `on_mount` hook on
   the `:authenticated` live session (see `router.ex`). The active tenant is
   resolved from the LiveView session key `:active_tenant_id`, defaulting to the
@@ -14,7 +18,11 @@ defmodule BeamChatWeb.RoomTreeLive do
 
   use BeamChatWeb, :live_view
 
+  require Logger
+
   alias BeamChat.Accounts.User
+  alias BeamChat.Authorization
+  alias BeamChat.Authorization.Scope
   alias BeamChat.Repo
   alias BeamChat.Rooms
   alias BeamChat.Rooms.AccessPolicy
@@ -37,7 +45,7 @@ defmodule BeamChatWeb.RoomTreeLive do
       |> assign(:page_title, "Room Tree")
       |> assign(:tenants, tenants)
       |> assign(:tenant, tenant)
-      |> assign(:is_admin, admin?(tenant, user))
+      |> assign(:is_admin, can_create_rooms?(tenant, user))
       |> assign(:tenant_form, to_form(%{"tenant_id" => tenant && tenant.id}, as: :switcher))
       |> assign(:draft, new_draft())
       |> assign(:show_create, false)
@@ -57,9 +65,16 @@ defmodule BeamChatWeb.RoomTreeLive do
           tenant = Enum.find(socket.assigns.tenants, &(&1.id == tenant_id))
 
           if tenant do
+            # The mount-time GUC context resolved by BeamChatWeb.TenantContext
+            # matched the ?tenant= param at mount, but a tenant switch arrives
+            # here via push_patch without re-running the on_mount hooks — re-sync
+            # the process context so legacy `Repo.scoped/1` calls (e.g. inside
+            # `Rooms.create_room/1`) see the tenant this view is now rendering.
+            Repo.set_tenant_context(tenant.id, socket.assigns.current_user.id)
+
             socket
             |> assign(:tenant, tenant)
-            |> assign(:is_admin, admin?(tenant, socket.assigns.current_user))
+            |> assign(:is_admin, can_create_rooms?(tenant, socket.assigns.current_user))
             |> assign(:tenant_form, to_form(%{"tenant_id" => tenant.id}, as: :switcher))
             |> assign(:tree, load_tree(socket))
           else
@@ -86,8 +101,12 @@ defmodule BeamChatWeb.RoomTreeLive do
 
   @impl true
   def handle_event("start-create", %{"parent_id" => parent_id}, socket) do
-    draft = Map.put(socket.assigns.draft, "parent_id", parent_id)
-    {:noreply, assign(socket, draft: draft, form: draft_to_form(draft), show_create: true)}
+    if can_create_rooms?(socket) do
+      draft = Map.put(socket.assigns.draft, "parent_id", parent_id)
+      {:noreply, assign(socket, draft: draft, form: draft_to_form(draft), show_create: true)}
+    else
+      {:noreply, deny_room_create(socket)}
+    end
   end
 
   @impl true
@@ -98,6 +117,14 @@ defmodule BeamChatWeb.RoomTreeLive do
 
   @impl true
   def handle_event("save", %{"room" => params}, socket) do
+    if can_create_rooms?(socket) do
+      create_room(socket, params)
+    else
+      {:noreply, deny_room_create(socket)}
+    end
+  end
+
+  defp create_room(socket, params) do
     user = socket.assigns.current_user
     tenant = socket.assigns.tenant
     draft = merge_draft(socket.assigns.draft, params)
@@ -131,6 +158,32 @@ defmodule BeamChatWeb.RoomTreeLive do
       {:error, changeset} ->
         {:noreply, assign(socket, draft: draft, form: to_form(changeset, as: :room))}
     end
+  end
+
+  # Server-side authorization for room creation. The create form is only
+  # rendered for privileged users, but events can be forged from any client —
+  # the permission check here is the actual gate, not the hidden UI.
+  defp can_create_rooms?(%{assigns: %{tenant: tenant, current_user: user}}),
+    do: can_create_rooms?(tenant, user)
+
+  defp can_create_rooms?(tenant, %User{} = user),
+    do: Authorization.can?(Scope.for_user(user, tenant), :room_create)
+
+  defp can_create_rooms?(_tenant, _user), do: false
+
+  defp deny_room_create(socket) do
+    user = socket.assigns.current_user
+    tenant = socket.assigns.tenant
+
+    Logger.warning(
+      "room create denied: user #{user && user.id} lacks :room_create in tenant #{tenant && tenant.id}"
+    )
+
+    socket
+    |> put_flash(:error, "You do not have access.")
+    |> assign(:draft, new_draft())
+    |> assign(:form, draft_to_form(new_draft()))
+    |> assign(:show_create, false)
   end
 
   # ---------------------------------------------------------------------------
@@ -311,10 +364,6 @@ defmodule BeamChatWeb.RoomTreeLive do
   # Private helpers
   # ---------------------------------------------------------------------------
 
-  defp admin?(nil, _user), do: false
-  defp admin?(tenant, %User{} = user), do: Tenants.admin?(tenant, user)
-  defp admin?(_tenant, _user), do: false
-
   defp new_draft do
     %{"name" => "", "slug" => "", "description" => "", "type" => "public", "parent_id" => ""}
   end
@@ -335,6 +384,9 @@ defmodule BeamChatWeb.RoomTreeLive do
   # Loads the tree for the active tenant. Admin reads run inside
   # `Repo.with_tenant/3` so PostgreSQL Row Level Security applies the correct
   # `app.current_tenant_id` GUC; non-admins use the visibility-scoped policy.
+  # Full-tree visibility is a tenant-admin power (it mirrors the RLS select
+  # policy); the create controls additionally open for global admins via the
+  # `:room_create` permission.
   defp load_tree(socket) do
     case socket.assigns.tenant do
       nil -> []
@@ -343,7 +395,7 @@ defmodule BeamChatWeb.RoomTreeLive do
   end
 
   defp load_tenant_tree(socket, tenant) do
-    if socket.assigns.is_admin do
+    if Tenants.admin?(tenant, socket.assigns.current_user) do
       Repo.with_tenant(tenant.id, socket.assigns.current_user.id, fn ->
         roots = Rooms.list_child_rooms(nil)
         Enum.map(roots, &build_node/1)

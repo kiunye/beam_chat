@@ -72,7 +72,8 @@ defmodule BeamChatWeb.VideoLiveTest do
       assert html =~ "video-join-button"
 
       # Ban the user mid-session — this also wipes their tokens.
-      assert {:ok, _} = Accounts.ban_user(user, "video abuse")
+      admin = user_fixture(%{role: "admin"})
+      assert {:ok, _} = Accounts.ban_user(admin, user, "video abuse")
 
       # Spawn the join_video event targeted at the LiveKitRoom component and
       # assert it does NOT push a `livekit_connect` event to the client. The
