@@ -7,7 +7,6 @@ defmodule BeamChat.Accounts do
   alias BeamChat.Audit
   alias BeamChat.AuthEmail
   alias BeamChat.Authorization
-  alias BeamChat.Authorization.Scope
   alias BeamChat.Mailer
   alias BeamChat.Repo
 
@@ -242,7 +241,7 @@ defmodule BeamChat.Accounts do
   as logged out (defence in depth, since `is_banned: true` also short-circuits).
   """
   def ban_user(%User{} = actor, %User{} = user, reason \\ nil) do
-    with :ok <- ensure_can_ban(actor) do
+    with :ok <- Authorization.ensure_permission(actor, :user_ban) do
       do_ban_user(actor, user, reason)
     end
   end
@@ -277,7 +276,7 @@ defmodule BeamChat.Accounts do
   Gated on the same `:user_ban` permission as `ban_user/3`.
   """
   def unban_user(%User{} = actor, %User{} = user) do
-    with :ok <- ensure_can_ban(actor) do
+    with :ok <- Authorization.ensure_permission(actor, :user_ban) do
       do_unban_user(actor, user)
     end
   end
@@ -316,7 +315,7 @@ defmodule BeamChat.Accounts do
           | {:error, :forbidden | :self_role_change | :invalid_role | Ecto.Changeset.t()}
   def set_global_role(%User{id: actor_id} = actor, %User{id: target_id} = target, role)
       when role in ~w(member moderator admin) and actor_id != target_id do
-    with :ok <- ensure_can_manage_roles(actor) do
+    with :ok <- Authorization.ensure_permission(actor, :user_manage_roles) do
       target
       |> Ecto.Changeset.change(role: role)
       |> Ecto.Changeset.validate_inclusion(:role, ~w(member moderator admin))
@@ -339,24 +338,6 @@ defmodule BeamChat.Accounts do
       do: {:error, :self_role_change}
 
   def set_global_role(%User{}, %User{}, _role), do: {:error, :invalid_role}
-
-  # Banning is a global platform action, so the actor's global role decides
-  # (tenant roles grant no `:user_ban` — see the Roles catalogue).
-  defp ensure_can_ban(%User{} = actor) do
-    if Authorization.can?(Scope.for_user(actor, nil), :user_ban) do
-      :ok
-    else
-      {:error, :forbidden}
-    end
-  end
-
-  defp ensure_can_manage_roles(%User{} = actor) do
-    if Authorization.can?(Scope.for_user(actor, nil), :user_manage_roles) do
-      :ok
-    else
-      {:error, :forbidden}
-    end
-  end
 
   defp delete_user_tokens(user_id) do
     {count, _} = Repo.delete_all(from t in UserToken, where: t.user_id == ^user_id)

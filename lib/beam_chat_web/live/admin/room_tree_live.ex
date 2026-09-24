@@ -36,18 +36,14 @@ defmodule BeamChatWeb.RoomTreeLive do
 
   @impl true
   def mount(params, session, socket) do
-    user = socket.assigns.current_user
-    tenants = Tenants.list_tenants_for_user(user)
-    active_id = params["tenant"] || session["active_tenant_id"]
-    tenant = Enum.find(tenants, &(&1.id == active_id)) || List.first(tenants)
-
     socket =
       socket
       |> assign(:page_title, "Room Tree")
-      |> assign(:tenants, tenants)
-      |> assign(:tenant, tenant)
-      |> assign(:is_admin, can_create_rooms?(tenant, user))
-      |> assign(:tenant_form, to_form(%{"tenant_id" => tenant && tenant.id}, as: :switcher))
+      |> assign_active_tenant(params, session)
+
+    socket =
+      socket
+      |> assign(:is_admin, can_create_rooms?(socket.assigns.tenant, socket.assigns.current_user))
       |> assign(:draft, new_draft())
       |> assign(:show_create, false)
       |> assign(:form, draft_to_form(new_draft()))
@@ -58,29 +54,15 @@ defmodule BeamChatWeb.RoomTreeLive do
   @impl true
   def handle_params(params, _uri, socket) do
     socket =
-      case params["tenant"] do
+      case find_tenant(socket.assigns.tenants, params["tenant"]) do
         nil ->
           socket
 
-        tenant_id ->
-          tenant = Enum.find(socket.assigns.tenants, &(&1.id == tenant_id))
-
-          if tenant do
-            # The mount-time GUC context resolved by BeamChatWeb.TenantContext
-            # matched the ?tenant= param at mount, but a tenant switch arrives
-            # here via push_patch without re-running the on_mount hooks — re-sync
-            # the process context so legacy `Repo.scoped/1` calls (e.g. inside
-            # `Rooms.create_room/1`) see the tenant this view is now rendering.
-            Repo.set_tenant_context(tenant.id, socket.assigns.current_user.id)
-
-            socket
-            |> assign(:tenant, tenant)
-            |> assign(:is_admin, can_create_rooms?(tenant, socket.assigns.current_user))
-            |> assign(:tenant_form, to_form(%{"tenant_id" => tenant.id}, as: :switcher))
-            |> assign(:tree, load_tree(socket))
-          else
-            socket
-          end
+        tenant ->
+          socket
+          |> activate_tenant(tenant)
+          |> assign(:is_admin, can_create_rooms?(tenant, socket.assigns.current_user))
+          |> assign(:tree, load_tree(socket))
       end
 
     {:noreply, socket}
@@ -274,19 +256,7 @@ defmodule BeamChatWeb.RoomTreeLive do
       <div class="rounded-box border border-base-300 bg-base-100 p-4">
         <h2 class="text-sm font-semibold text-base-content mb-2">Current Tenant</h2>
 
-        <.form
-          for={@tenant_form}
-          id="tenant-switcher-form"
-          phx-submit="tenant-selected"
-          class="flex items-center gap-2"
-        >
-          <.input
-            field={@tenant_form[:tenant_id]}
-            type="select"
-            class="w-48"
-            options={Enum.map(@tenants, fn t -> {t.name || t.id, t.id} end)}
-          />
-        </.form>
+        <.tenant_switcher tenants={@tenants} form={@tenant_form} />
       </div>
 
       <%= if @tree != [] do %>

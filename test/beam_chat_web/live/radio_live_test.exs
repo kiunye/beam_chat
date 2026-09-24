@@ -9,28 +9,14 @@ defmodule BeamChatWeb.RadioLiveTest do
   import BeamChat.TestFixtures
   import Phoenix.LiveViewTest
 
-  alias BeamChat.Repo
-  alias BeamChat.Tenants
   alias BeamChat.Video.TokenService
 
   defp uniq, do: :erlang.unique_integer([:positive]) |> to_string()
 
-  defp radio_tenant do
-    {:ok, tenant} = Tenants.create_tenant(%{name: "Tune " <> uniq(), slug: "tune-" <> uniq()})
-    tenant
-  end
-
-  defp join!(tenant, user, role) do
-    Repo.with_tenant(tenant.id, user.id, fn ->
-      {:ok, _} = Tenants.add_member(tenant, user, role)
-    end)
-  end
-
   describe "index" do
     test "lists only active stations of the tenant", %{conn: conn} do
       user = registered_user_fixture()
-      tenant = radio_tenant()
-      join!(tenant, user, "member")
+      tenant = tenant_with_member(user, "member")
 
       live_one =
         radio_station_fixture(tenant, %{name: "Horn FM", is_active: true, status: "live"})
@@ -47,8 +33,7 @@ defmodule BeamChatWeb.RadioLiveTest do
 
     test "listening pushes a subscribe-only radio_connect event", %{conn: conn} do
       user = registered_user_fixture()
-      tenant = radio_tenant()
-      join!(tenant, user, "member")
+      tenant = tenant_with_member(user, "member")
 
       station =
         radio_station_fixture(tenant, %{
@@ -82,8 +67,7 @@ defmodule BeamChatWeb.RadioLiveTest do
 
     test "stopping pushes a radio_disconnect event for the station", %{conn: conn} do
       user = registered_user_fixture()
-      tenant = radio_tenant()
-      join!(tenant, user, "member")
+      tenant = tenant_with_member(user, "member")
 
       station =
         radio_station_fixture(tenant, %{
@@ -106,8 +90,7 @@ defmodule BeamChatWeb.RadioLiveTest do
 
     test "switching stations disconnects the previous one first", %{conn: conn} do
       user = registered_user_fixture()
-      tenant = radio_tenant()
-      join!(tenant, user, "member")
+      tenant = tenant_with_member(user, "member")
 
       one =
         radio_station_fixture(tenant, %{

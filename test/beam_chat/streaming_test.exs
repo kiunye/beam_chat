@@ -14,16 +14,6 @@ defmodule BeamChat.StreamingTest do
 
   defp uniq, do: :erlang.unique_integer([:positive]) |> to_string()
 
-  defp tenant_with(user, role) do
-    {:ok, tenant} = Tenants.create_tenant(%{name: "Radio " <> uniq(), slug: "radio-" <> uniq()})
-
-    Repo.with_tenant(tenant.id, user.id, fn ->
-      {:ok, _} = Tenants.add_member(tenant, user, role)
-    end)
-
-    tenant
-  end
-
   defp station_attrs do
     %{
       "name" => "Horn FM",
@@ -36,7 +26,7 @@ defmodule BeamChat.StreamingTest do
   describe "create_station/3" do
     test "tenant admin can create a station and the creation is audited" do
       admin = user_fixture()
-      tenant = tenant_with(admin, "admin")
+      tenant = tenant_with_member(admin, "admin")
 
       assert {:ok, station} = Streaming.create_station(admin, tenant, station_attrs())
       assert station.tenant_id == tenant.id
@@ -51,7 +41,7 @@ defmodule BeamChat.StreamingTest do
 
     test "a plain tenant member is forbidden" do
       member = user_fixture()
-      tenant = tenant_with(member, "member")
+      tenant = tenant_with_member(member, "member")
 
       assert {:error, :forbidden} = Streaming.create_station(member, tenant, station_attrs())
     end
@@ -74,7 +64,7 @@ defmodule BeamChat.StreamingTest do
 
     test "rejects url sources without a source URL" do
       admin = user_fixture()
-      tenant = tenant_with(admin, "admin")
+      tenant = tenant_with_member(admin, "admin")
 
       assert {:error, changeset} =
                Streaming.create_station(admin, tenant, %{
@@ -88,7 +78,7 @@ defmodule BeamChat.StreamingTest do
 
     test "rejects unknown source types and malformed slugs" do
       admin = user_fixture()
-      tenant = tenant_with(admin, "admin")
+      tenant = tenant_with_member(admin, "admin")
 
       assert {:error, changeset} =
                Streaming.create_station(admin, tenant, %{
@@ -111,9 +101,9 @@ defmodule BeamChat.StreamingTest do
   describe "list_stations/2 and gets (RLS isolation)" do
     test "stations are only visible inside their tenant" do
       admin_a = user_fixture()
-      tenant_a = tenant_with(admin_a, "admin")
+      tenant_a = tenant_with_member(admin_a, "admin")
       admin_b = user_fixture()
-      tenant_b = tenant_with(admin_b, "admin")
+      tenant_b = tenant_with_member(admin_b, "admin")
 
       station_a = radio_station_fixture(tenant_a)
       radio_station_fixture(tenant_b)
@@ -134,7 +124,7 @@ defmodule BeamChat.StreamingTest do
   describe "update_station/3 and delete_station/2" do
     test "tenant admin can update and delete, both audited" do
       admin = user_fixture()
-      tenant = tenant_with(admin, "admin")
+      tenant = tenant_with_member(admin, "admin")
       station = radio_station_fixture(tenant)
 
       assert {:ok, updated} =
@@ -158,7 +148,7 @@ defmodule BeamChat.StreamingTest do
 
     test "a plain tenant member cannot update or delete" do
       admin = user_fixture()
-      tenant = tenant_with(admin, "admin")
+      tenant = tenant_with_member(admin, "admin")
       member = user_fixture()
 
       Repo.with_tenant(tenant.id, member.id, fn ->
@@ -177,7 +167,7 @@ defmodule BeamChat.StreamingTest do
   describe "slug uniqueness" do
     test "duplicate slugs are rejected" do
       admin = user_fixture()
-      tenant = tenant_with(admin, "admin")
+      tenant = tenant_with_member(admin, "admin")
       attrs = station_attrs()
 
       assert {:ok, _} = Streaming.create_station(admin, tenant, attrs)
@@ -192,7 +182,7 @@ defmodule BeamChat.StreamingTest do
 
     test "start_station provisions an Ingress and marks the station starting" do
       admin = user_fixture()
-      tenant = tenant_with(admin, "admin")
+      tenant = tenant_with_member(admin, "admin")
       station = radio_station_fixture(tenant)
 
       assert {:ok, started} = Streaming.start_station(admin, station)
@@ -215,7 +205,7 @@ defmodule BeamChat.StreamingTest do
 
     test "starting an already-active station is rejected" do
       admin = user_fixture()
-      tenant = tenant_with(admin, "admin")
+      tenant = tenant_with_member(admin, "admin")
       station = radio_station_fixture(tenant)
 
       {:ok, started} = Streaming.start_station(admin, station)
@@ -224,7 +214,7 @@ defmodule BeamChat.StreamingTest do
 
     test "a provisioning failure marks the station error and is audited" do
       admin = user_fixture()
-      tenant = tenant_with(admin, "admin")
+      tenant = tenant_with_member(admin, "admin")
       station = radio_station_fixture(tenant)
 
       Process.put(:ingress_fake_create_result, {:error, :livekit_down})
@@ -242,7 +232,7 @@ defmodule BeamChat.StreamingTest do
 
     test "a plain tenant member cannot start or stop a station" do
       admin = user_fixture()
-      tenant = tenant_with(admin, "admin")
+      tenant = tenant_with_member(admin, "admin")
       member = user_fixture()
 
       Repo.with_tenant(tenant.id, member.id, fn ->
@@ -257,7 +247,7 @@ defmodule BeamChat.StreamingTest do
 
     test "stop_station tears down the Ingress and returns the station to offline" do
       admin = user_fixture()
-      tenant = tenant_with(admin, "admin")
+      tenant = tenant_with_member(admin, "admin")
       station = radio_station_fixture(tenant)
 
       {:ok, started} = Streaming.start_station(admin, station)
@@ -276,7 +266,7 @@ defmodule BeamChat.StreamingTest do
 
     test "a failed remote delete leaves the station untouched" do
       admin = user_fixture()
-      tenant = tenant_with(admin, "admin")
+      tenant = tenant_with_member(admin, "admin")
       station = radio_station_fixture(tenant)
       {:ok, started} = Streaming.start_station(admin, station)
 
@@ -292,7 +282,7 @@ defmodule BeamChat.StreamingTest do
 
     test "apply_ingress_event mirrors webhook state transitions" do
       admin = user_fixture()
-      tenant = tenant_with(admin, "admin")
+      tenant = tenant_with_member(admin, "admin")
 
       station =
         radio_station_fixture(tenant, %{is_active: true, ingress_id: "ing_x", status: "starting"})

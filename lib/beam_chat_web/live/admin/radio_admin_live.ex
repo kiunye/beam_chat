@@ -12,52 +12,32 @@ defmodule BeamChatWeb.RadioAdminLive do
 
   use BeamChatWeb, :live_view
 
-  alias BeamChat.Repo
   alias BeamChat.Streaming
   alias BeamChat.Streaming.RadioStation
-  alias BeamChat.Tenants
 
   @impl true
   def mount(params, session, socket) do
-    user = socket.assigns.current_user
-    tenants = Tenants.list_tenants_for_user(user)
-    active_id = params["tenant"] || session["active_tenant_id"]
-    tenant = Enum.find(tenants, &(&1.id == active_id)) || List.first(tenants)
-
     socket =
       socket
       |> assign(:page_title, "Radio")
-      |> assign(:tenants, tenants)
-      |> assign(:tenant, tenant)
-      |> assign(:tenant_form, to_form(%{"tenant_id" => tenant && tenant.id}, as: :switcher))
+      |> assign_active_tenant(params, session)
       |> assign(:show_create, false)
       |> assign(draft_assigns(new_draft()))
 
-    {:ok, stream_stations(socket, tenant, user)}
+    {:ok, stream_stations(socket, socket.assigns.tenant, socket.assigns.current_user)}
   end
 
   @impl true
   def handle_params(params, _uri, socket) do
     socket =
-      case params["tenant"] do
+      case find_tenant(socket.assigns.tenants, params["tenant"]) do
         nil ->
           socket
 
-        tenant_id ->
-          tenant = Enum.find(socket.assigns.tenants, &(&1.id == tenant_id))
-
-          if tenant do
-            # Keep the process tenant context in sync with the tenant this
-            # view renders (same reasoning as RoomTreeLive's handle_params).
-            Repo.set_tenant_context(tenant.id, socket.assigns.current_user.id)
-
-            socket
-            |> assign(:tenant, tenant)
-            |> assign(:tenant_form, to_form(%{"tenant_id" => tenant.id}, as: :switcher))
-            |> stream_stations(tenant, socket.assigns.current_user)
-          else
-            socket
-          end
+        tenant ->
+          socket
+          |> activate_tenant(tenant)
+          |> stream_stations(tenant, socket.assigns.current_user)
       end
 
     {:noreply, socket}
@@ -237,23 +217,6 @@ defmodule BeamChatWeb.RadioAdminLive do
     to_form(changeset, as: :station)
   end
 
-  defp tenant_options(tenants) do
-    Enum.map(tenants, &{&1.name, &1.id})
-  end
-
-  defp status_badge(status) do
-    case status do
-      "live" -> "badge-success"
-      "starting" -> "badge-warning"
-      "error" -> "badge-error"
-      _other -> "badge-ghost"
-    end
-  end
-
-  defp source_label("url"), do: "Pull (HLS/SRT)"
-  defp source_label("rtmp"), do: "Push (RTMP)"
-  defp source_label("whip"), do: "Push (WHIP)"
-
   # ---------------------------------------------------------------------------
   # Rendering
   # ---------------------------------------------------------------------------
@@ -266,19 +229,7 @@ defmodule BeamChatWeb.RadioAdminLive do
         <h1 class="text-xl font-display font-semibold text-base-content">Radio</h1>
 
         <div class="flex items-center gap-2">
-          <.form
-            for={@tenant_form}
-            id="tenant-switcher"
-            phx-change="tenant-selected"
-            class="flex items-center gap-2"
-          >
-            <.input
-              field={@tenant_form[:tenant_id]}
-              type="select"
-              options={tenant_options(@tenants)}
-              label="Tenant"
-            />
-          </.form>
+          <.tenant_switcher tenants={@tenants} form={@tenant_form} />
 
           <button
             :if={@tenant}
@@ -367,9 +318,7 @@ defmodule BeamChatWeb.RadioAdminLive do
                 </p>
               </td>
               <td>
-                <span class={["badge badge-sm", status_badge(station.status)]}>
-                  {station.status}
-                </span>
+                <.station_status_badge status={station.status} />
               </td>
               <td>
                 <div class="flex items-center justify-end gap-2">

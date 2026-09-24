@@ -146,6 +146,10 @@ defmodule BeamChatWeb do
       import Phoenix.HTML
       # Core UI components
       import BeamChatWeb.CoreComponents
+      # Tenant-scoped page plumbing + tenant switcher
+      import BeamChatWeb.TenantScoped
+      # Radio presentation helpers
+      import BeamChatWeb.RadioComponents
 
       # Common modules used in templates
       alias BeamChatWeb.Layouts

@@ -24,7 +24,6 @@ defmodule BeamChat.Streaming do
   alias BeamChat.Accounts.User
   alias BeamChat.Audit
   alias BeamChat.Authorization
-  alias BeamChat.Authorization.Scope
   alias BeamChat.Repo
   alias BeamChat.Streaming.IngressClient
   alias BeamChat.Streaming.RadioStation
@@ -32,6 +31,8 @@ defmodule BeamChat.Streaming do
 
   @type station :: RadioStation.t()
 
+  # Reads pass the acting user's id as the GUC user for parity with the
+  # write paths; the radio_stations policies consult only the tenant GUC.
   @doc """
   List the radio stations of `tenant`, ordered by name. RLS confines the
   query to the tenant, so a caller cannot enumerate another tenant's
@@ -39,9 +40,9 @@ defmodule BeamChat.Streaming do
   """
   @spec list_stations(struct() | Ecto.UUID.t(), struct() | Ecto.UUID.t()) :: [station()]
   def list_stations(user_or_id, tenant_or_id) do
-    tenant_id = id_of(tenant_or_id)
+    tenant_id = Authorization.id_of(tenant_or_id)
 
-    Repo.with_tenant(tenant_id, id_of(user_or_id), fn ->
+    Repo.with_tenant(tenant_id, Authorization.id_of(user_or_id), fn ->
       from(s in RadioStation,
         where: s.tenant_id == ^tenant_id,
         order_by: [asc: s.name]
@@ -53,7 +54,7 @@ defmodule BeamChat.Streaming do
   @doc "Fetch one station by id, inside the tenant's RLS context."
   @spec get_station(struct() | Ecto.UUID.t(), Ecto.UUID.t(), Ecto.UUID.t()) :: station() | nil
   def get_station(user_or_id, tenant_id, station_id) do
-    Repo.with_tenant(tenant_id, id_of(user_or_id), fn ->
+    Repo.with_tenant(tenant_id, Authorization.id_of(user_or_id), fn ->
       Repo.get(RadioStation, station_id)
     end)
   end
@@ -62,7 +63,7 @@ defmodule BeamChat.Streaming do
   @spec get_station_by_slug(struct() | Ecto.UUID.t(), Ecto.UUID.t(), String.t()) ::
           station() | nil
   def get_station_by_slug(user_or_id, tenant_id, slug) do
-    Repo.with_tenant(tenant_id, id_of(user_or_id), fn ->
+    Repo.with_tenant(tenant_id, Authorization.id_of(user_or_id), fn ->
       Repo.get_by(RadioStation, slug: slug)
     end)
   end
@@ -86,8 +87,8 @@ defmodule BeamChat.Streaming do
   @spec create_station(User.t(), struct() | Ecto.UUID.t(), map()) ::
           {:ok, station()} | {:error, :forbidden | :not_found | Ecto.Changeset.t()}
   def create_station(%User{} = actor, tenant_or_id, attrs) do
-    with {:ok, tenant} <- fetch_tenant(tenant_or_id),
-         :ok <- ensure_can_manage(actor, tenant) do
+    with {:ok, tenant} <-
+           Authorization.ensure_tenant_permission(actor, tenant_or_id, :radio_manage) do
       changeset =
         %RadioStation{tenant_id: tenant.id, status: "offline", is_active: false}
         |> RadioStation.create_changeset(attrs)
@@ -112,8 +113,8 @@ defmodule BeamChat.Streaming do
   @spec update_station(User.t(), station(), map()) ::
           {:ok, station()} | {:error, :forbidden | Ecto.Changeset.t()}
   def update_station(%User{} = actor, %RadioStation{} = station, attrs) do
-    with {:ok, tenant} <- fetch_tenant(station.tenant_id),
-         :ok <- ensure_can_manage(actor, tenant) do
+    with {:ok, _tenant} <-
+           Authorization.ensure_tenant_permission(actor, station.tenant_id, :radio_manage) do
       changeset = RadioStation.update_changeset(station, attrs)
 
       Repo.with_tenant(station.tenant_id, actor.id, fn ->
@@ -136,8 +137,8 @@ defmodule BeamChat.Streaming do
   @spec delete_station(User.t(), station()) ::
           {:ok, station()} | {:error, :forbidden | Ecto.Changeset.t()}
   def delete_station(%User{} = actor, %RadioStation{} = station) do
-    with {:ok, tenant} <- fetch_tenant(station.tenant_id),
-         :ok <- ensure_can_manage(actor, tenant) do
+    with {:ok, _tenant} <-
+           Authorization.ensure_tenant_permission(actor, station.tenant_id, :radio_manage) do
       Repo.with_tenant(station.tenant_id, actor.id, fn -> remove_station(station, actor) end)
     end
   end
@@ -176,8 +177,8 @@ defmodule BeamChat.Streaming do
           {:ok, station()}
           | {:error, :forbidden | :already_active | :not_found | term()}
   def start_station(%User{} = actor, %RadioStation{} = station) do
-    with {:ok, tenant} <- fetch_tenant(station.tenant_id),
-         :ok <- ensure_can_manage(actor, tenant),
+    with {:ok, _tenant} <-
+           Authorization.ensure_tenant_permission(actor, station.tenant_id, :radio_manage),
          :ok <- ensure_not_active(station) do
       case IngressClient.create_ingress(ingress_attrs(station)) do
         {:ok, info} -> mark_started(actor, station, info)
@@ -200,8 +201,8 @@ defmodule BeamChat.Streaming do
           {:ok, station()}
           | {:error, :forbidden | :not_found | {:ingress_delete_failed, term()}}
   def stop_station(%User{} = actor, %RadioStation{} = station) do
-    with {:ok, tenant} <- fetch_tenant(station.tenant_id),
-         :ok <- ensure_can_manage(actor, tenant),
+    with {:ok, _tenant} <-
+           Authorization.ensure_tenant_permission(actor, station.tenant_id, :radio_manage),
          :ok <- delete_remote_ingress(station) do
       mark_stopped(actor, station)
     end
@@ -233,6 +234,8 @@ defmodule BeamChat.Streaming do
     else
       changeset = RadioStation.status_changeset(station, status)
 
+      # The tenant id doubles as the (inert) GUC user: the radio_stations
+      # policies consult only the tenant GUC, and webhooks carry no user.
       Repo.with_tenant(station.tenant_id, station.tenant_id, fn ->
         {:ok, _updated} = Repo.update(changeset)
         :ok
@@ -343,23 +346,6 @@ defmodule BeamChat.Streaming do
     end)
   end
 
-  # -- shared plumbing ---------------------------------------------------------
-
-  defp fetch_tenant(tenant_or_id) do
-    case Tenants.get_tenant(id_of(tenant_or_id)) do
-      %Tenants.Tenant{} = tenant -> {:ok, tenant}
-      nil -> {:error, :not_found}
-    end
-  end
-
-  defp ensure_can_manage(%User{} = actor, tenant) do
-    if Authorization.can?(Scope.for_user(actor, tenant), :radio_manage) do
-      :ok
-    else
-      {:error, :forbidden}
-    end
-  end
-
   # Slug availability is pre-checked (instead of relying on the unique
   # index surfacing through `unique_constraint/1`) because a database-level
   # constraint violation inside `Repo.with_tenant/3` — a savepoint under the
@@ -375,7 +361,4 @@ defmodule BeamChat.Streaming do
       :ok
     end
   end
-
-  defp id_of(%{id: id}), do: id
-  defp id_of(id) when is_binary(id), do: id
 end

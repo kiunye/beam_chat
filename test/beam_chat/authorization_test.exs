@@ -18,12 +18,6 @@ defmodule BeamChat.AuthorizationTest do
 
   defp uniq, do: :erlang.unique_integer([:positive]) |> to_string()
 
-  defp tenant_with_member(user, role) do
-    {:ok, tenant} = Tenants.create_tenant(%{name: "T " <> uniq(), slug: "t-" <> uniq()})
-    {:ok, _} = Tenants.add_member(tenant, user, role)
-    tenant
-  end
-
   describe "Scope.for_user/2" do
     test "guest scope carries no user, tenant, or role" do
       scope = Scope.for_user(nil, nil)
@@ -220,6 +214,64 @@ defmodule BeamChat.AuthorizationTest do
 
       refute Authorization.can?(nil, :room_message_delete, %{room: room})
       refute Authorization.can?(Scope.for_user(nil, nil), :room_message_delete, %{room: room})
+    end
+  end
+
+  describe "Authorization.ensure_permission/2" do
+    test "returns :ok for a global admin holding the permission" do
+      admin = user_fixture(%{role: "admin"})
+
+      assert :ok = Authorization.ensure_permission(admin, :user_ban)
+    end
+
+    test "returns {:error, :forbidden} for a user without the permission" do
+      member = user_fixture(%{role: "member"})
+
+      assert {:error, :forbidden} = Authorization.ensure_permission(member, :user_ban)
+    end
+
+    test "tenant powers do not satisfy global checks" do
+      tenant_admin = user_fixture()
+      tenant_with_member(tenant_admin, "admin")
+
+      # `:radio_manage` comes from the TENANT admin role only, so the global
+      # check fails even though a tenant-scoped `can?/2` would pass.
+      assert {:error, :forbidden} = Authorization.ensure_permission(tenant_admin, :radio_manage)
+    end
+  end
+
+  describe "Authorization.ensure_tenant_permission/3" do
+    test "returns the tenant for an authorized actor" do
+      admin = user_fixture()
+      tenant = tenant_with_member(admin, "admin")
+
+      assert {:ok, found} = Authorization.ensure_tenant_permission(admin, tenant, :tenant_manage)
+      assert found.id == tenant.id
+    end
+
+    test "accepts raw tenant ids" do
+      admin = user_fixture()
+      tenant = tenant_with_member(admin, "admin")
+
+      assert {:ok, found} =
+               Authorization.ensure_tenant_permission(admin, tenant.id, :radio_manage)
+
+      assert found.id == tenant.id
+    end
+
+    test "returns {:error, :forbidden} for an unauthorized member" do
+      member = user_fixture()
+      tenant = tenant_with_member(member, "member")
+
+      assert {:error, :forbidden} =
+               Authorization.ensure_tenant_permission(member, tenant, :tenant_manage)
+    end
+
+    test "returns {:error, :not_found} for an unknown tenant" do
+      admin = user_fixture(%{role: "admin"})
+
+      assert {:error, :not_found} =
+               Authorization.ensure_tenant_permission(admin, Ecto.UUID.generate(), :tenant_manage)
     end
   end
 

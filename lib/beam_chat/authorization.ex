@@ -17,10 +17,12 @@ defmodule BeamChat.Authorization do
   of their global role plus those of their role in the active tenant.
   """
 
+  alias BeamChat.Accounts.User
   alias BeamChat.Authorization.Roles
   alias BeamChat.Authorization.Scope
   alias BeamChat.Rooms
   alias BeamChat.Rooms.Room
+  alias BeamChat.Tenants
 
   @doc """
   Whether `scope` holds `permission`.
@@ -81,4 +83,59 @@ defmodule BeamChat.Authorization do
     Roles.global_permissions(scope.user.role) ++
       Roles.tenant_permissions(scope.tenant_role)
   end
+
+  # -- guarded entry points ----------------------------------------------------
+
+  @doc """
+  Require `actor` to hold a global (platform-level) `permission`, such as
+  `:user_ban` or `:wallet_credit`.
+
+  Returns `:ok` or `{:error, :forbidden}`. This and
+  `ensure_tenant_permission/3` are the only sanctioned ways contexts
+  should gate privileged actions — keeping the "who may act" contract in
+  one module instead of per-context copies.
+  """
+  @spec ensure_permission(User.t(), Roles.permission()) :: :ok | {:error, :forbidden}
+  def ensure_permission(%User{} = actor, permission) do
+    if can?(Scope.for_user(actor, nil), permission) do
+      :ok
+    else
+      {:error, :forbidden}
+    end
+  end
+
+  @doc """
+  Fetch `tenant_or_id` and require `actor` to hold `permission` in it.
+
+  Every tenant-scoped mutation starts with this exact step (fetch the
+  tenant, build the scope against it, check the permission), so it lives
+  here once. Returns `{:ok, tenant}` — the tenant struct the caller needs
+  for its `Repo.with_tenant/3` — or `{:error, :not_found | :forbidden}`.
+  """
+  @spec ensure_tenant_permission(User.t(), struct() | Ecto.UUID.t(), Roles.permission()) ::
+          {:ok, Tenants.Tenant.t()} | {:error, :not_found | :forbidden}
+  def ensure_tenant_permission(%User{} = actor, tenant_or_id, permission) do
+    case Tenants.get_tenant(id_of(tenant_or_id)) do
+      nil ->
+        {:error, :not_found}
+
+      %Tenants.Tenant{} = tenant ->
+        if can?(Scope.for_user(actor, tenant), permission) do
+          {:ok, tenant}
+        else
+          {:error, :forbidden}
+        end
+    end
+  end
+
+  @doc """
+  The id of a struct-or-id argument (user, tenant, station, ...).
+
+  The canonical resolver for actor/target plumbing — contexts and
+  policies share it instead of carrying private near-copies.
+  """
+  @spec id_of(struct() | Ecto.UUID.t() | nil) :: Ecto.UUID.t() | nil
+  def id_of(nil), do: nil
+  def id_of(%{id: id}), do: id
+  def id_of(id) when is_binary(id), do: id
 end

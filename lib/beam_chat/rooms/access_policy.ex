@@ -10,6 +10,7 @@ defmodule BeamChat.Rooms.AccessPolicy do
   import Ecto.Query
 
   alias BeamChat.Accounts.User
+  alias BeamChat.Authorization
   alias BeamChat.Repo
   alias BeamChat.Rooms
   alias BeamChat.Rooms.Room
@@ -88,8 +89,8 @@ defmodule BeamChat.Rooms.AccessPolicy do
   """
   @spec list_visible_rooms(struct() | Ecto.UUID.t(), struct() | Ecto.UUID.t()) :: room_list
   def list_visible_rooms(user, tenant) do
-    tenant_id = id_of(tenant)
-    user_id = id_of(user)
+    tenant_id = Authorization.id_of(tenant)
+    user_id = Authorization.id_of(user)
 
     if Tenants.admin?(tenant, user) do
       Repo.with_tenant(tenant_id, user_id, fn ->
@@ -117,7 +118,7 @@ defmodule BeamChat.Rooms.AccessPolicy do
   """
   @spec can_view?(struct() | Ecto.UUID.t(), room_type) :: boolean()
   def can_view?(user, %Room{tenant_id: tenant_id} = room) do
-    user_id = id_of(user)
+    user_id = Authorization.id_of(user)
 
     Repo.with_tenant(tenant_id, user_id, fn ->
       Tenants.admin?(tenant_id, user_id) or
@@ -128,9 +129,6 @@ defmodule BeamChat.Rooms.AccessPolicy do
         )
     end)
   end
-
-  defp id_of(%{id: id}), do: id
-  defp id_of(id) when is_binary(id), do: id
 
   @doc """
   Whether `user` may join the LiveKit audio/video session for `room`.

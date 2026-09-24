@@ -1,8 +1,7 @@
 defmodule BeamChatWeb.AuthorizationTest do
   @moduledoc """
-  Web-side authorization plumbing: the `BeamChatWeb.Plugs.Authorize`
-  plug and the `:current_scope` assignment done by
-  `BeamChatWeb.Plug.TenantContext`.
+  Web-side authorization plumbing: the `:current_scope` assignment done
+  by `BeamChatWeb.Plug.TenantContext`.
   """
 
   use BeamChatWeb.ConnCase, async: false
@@ -11,41 +10,6 @@ defmodule BeamChatWeb.AuthorizationTest do
   import Plug.Conn
 
   alias BeamChat.Authorization.Scope
-  alias BeamChatWeb.Plugs.Authorize
-
-  describe "Plugs.Authorize" do
-    defp authorize_conn(scope, permission) do
-      Phoenix.ConnTest.build_conn()
-      |> Plug.Test.init_test_session(%{})
-      |> fetch_flash()
-      |> assign(:current_scope, scope)
-      |> Authorize.call(permission)
-    end
-
-    test "lets a scope holding the permission through" do
-      admin = user_fixture(%{role: "admin"})
-
-      conn = authorize_conn(Scope.for_user(admin, nil), :user_ban)
-
-      refute conn.halted
-    end
-
-    test "halts and redirects a user without the permission" do
-      member = user_fixture()
-
-      conn = authorize_conn(Scope.for_user(member, nil), :user_ban)
-
-      assert conn.halted
-      assert conn.status == 302
-    end
-
-    test "halts and redirects to login when unauthenticated" do
-      conn = authorize_conn(Scope.for_user(nil, nil), :user_ban)
-
-      assert conn.halted
-      assert conn.status == 302
-    end
-  end
 
   describe "current_scope assignment" do
     test "browser pipeline assigns a scope with the active tenant for a logged-in user",
