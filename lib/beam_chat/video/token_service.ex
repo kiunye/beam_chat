@@ -111,6 +111,61 @@ defmodule BeamChat.Video.TokenService do
   end
 
   @doc """
+  Generate a **subscribe-only** LiveKit JWT for `user` to listen to
+  `room_name` (e.g. a radio station's `BeamChat.Streaming.livekit_room_name/1`).
+
+  Same conservative defaults as `generate_token/3` (short TTL, identity
+  `"user-" <> user.id`, no PII in claims). The grant denies publishing
+  entirely (`canPublish`/`canPublishData` false) so a listener can never
+  inject media or data into the room — radio rooms are one-way by
+  construction.
+
+  The hex `livekit` package's `Livekit.Grants` struct does not model
+  `canPublish`/`canSubscribe`, so this token is signed directly with
+  `Joken` using LiveKit's documented access-token claim shape.
+  """
+  @spec generate_listener_token(%{id: Ecto.UUID.t()}, String.t(), keyword()) ::
+          {:ok, token_payload()} | {:error, :not_configured}
+  def generate_listener_token(user, room_name, opts \\ []) do
+    case lk_config() do
+      {:error, :not_configured} = err ->
+        err
+
+      {:ok, %{api_key: api_key, api_secret: api_secret, url: url}} ->
+        ttl = Keyword.get(opts, :ttl, @default_ttl_seconds)
+        now = System.system_time(:second)
+        name = user_name(user)
+
+        claims = %{
+          "iss" => api_key,
+          "sub" => identity(user),
+          "nbf" => now,
+          "exp" => now + ttl,
+          "name" => name,
+          "video" => %{
+            "room" => room_name,
+            "roomJoin" => true,
+            "canPublish" => false,
+            "canSubscribe" => true,
+            "canPublishData" => false
+          }
+        }
+
+        signer = Joken.Signer.create("HS256", api_secret)
+        {:ok, token, _claims} = Joken.encode_and_sign(claims, signer)
+
+        {:ok,
+         %{
+           token: token,
+           url: url,
+           identity: identity(user),
+           name: name,
+           room: room_name
+         }}
+    end
+  end
+
+  @doc """
   Stable identity derived from the user UUID. Avoids putting PII in the token.
   """
   @spec identity(%{id: Ecto.UUID.t()}) :: String.t()

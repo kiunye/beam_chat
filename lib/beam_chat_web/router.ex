@@ -44,6 +44,7 @@ defmodule BeamChatWeb.Router do
       live "/messages", ChatLive.Private, :index
       live "/messages/:id", ChatLive.Private, :show
       live "/wallet", WalletLive.Index, :index
+      live "/radio", RadioLive.Index, :index
       live "/admin/rooms", RoomTreeLive, :index
     end
 
