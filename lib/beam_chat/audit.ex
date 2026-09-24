@@ -25,6 +25,7 @@ defmodule BeamChat.Audit do
   import Ecto.Query
 
   alias BeamChat.Audit.AuditLog
+  alias BeamChat.Authorization
   alias BeamChat.Repo
 
   @doc """
@@ -45,7 +46,7 @@ defmodule BeamChat.Audit do
   def log(actor, action, target, metadata \\ %{}) do
     attrs =
       %{
-        actor_id: id_of(actor),
+        actor_id: Authorization.id_of(actor),
         action: action,
         metadata: Map.new(metadata || %{})
       }
@@ -86,10 +87,6 @@ defmodule BeamChat.Audit do
   end
 
   defp target_attrs(other), do: %{target_type: "unknown", target_id: to_string(other)}
-
-  defp id_of(nil), do: nil
-  defp id_of(%{id: id}), do: id
-  defp id_of(id) when is_binary(id), do: id
 
   defp target_type(%module{}) do
     module |> Module.split() |> List.last() |> Macro.underscore()

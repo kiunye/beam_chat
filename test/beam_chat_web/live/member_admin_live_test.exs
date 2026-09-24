@@ -13,27 +13,12 @@ defmodule BeamChatWeb.MemberAdminLiveTest do
   import BeamChat.TestFixtures
   import Phoenix.LiveViewTest
 
-  alias BeamChat.Repo
   alias BeamChat.Tenants
-
-  defp uniq, do: :erlang.unique_integer([:positive]) |> to_string()
-
-  defp management_tenant do
-    {:ok, tenant} = Tenants.create_tenant(%{name: "Mgmt " <> uniq(), slug: "mgmt-" <> uniq()})
-    tenant
-  end
-
-  defp join!(tenant, user, role) do
-    Repo.with_tenant(tenant.id, user.id, fn ->
-      {:ok, _} = Tenants.add_member(tenant, user, role)
-    end)
-  end
 
   describe "route gate" do
     test "a plain tenant member is redirected away at mount", %{conn: conn} do
       user = registered_user_fixture()
-      tenant = management_tenant()
-      join!(tenant, user, "member")
+      tenant = tenant_with_member(user, "member")
 
       conn = log_in_user(conn, user)
 
@@ -53,10 +38,9 @@ defmodule BeamChatWeb.MemberAdminLiveTest do
     test "tenant admin lists members and changes a role", %{conn: conn} do
       admin = registered_user_fixture()
       member = registered_user_fixture()
-      tenant = management_tenant()
-
-      join!(tenant, admin, "admin")
-      join!(tenant, member, "member")
+      tenant = tenant_with_member(admin, "admin")
+      # `tenant_members` carries no RLS, so the extra membership needs no GUC wrap.
+      {:ok, _} = Tenants.add_member(tenant, member, "member")
 
       conn = log_in_user(conn, admin)
       {:ok, view, html} = live(conn, ~p"/admin/members?tenant=#{tenant.id}")
@@ -75,10 +59,9 @@ defmodule BeamChatWeb.MemberAdminLiveTest do
     test "tenant admin removes a member", %{conn: conn} do
       admin = registered_user_fixture()
       member = registered_user_fixture()
-      tenant = management_tenant()
-
-      join!(tenant, admin, "admin")
-      join!(tenant, member, "member")
+      tenant = tenant_with_member(admin, "admin")
+      # `tenant_members` carries no RLS, so the extra membership needs no GUC wrap.
+      {:ok, _} = Tenants.add_member(tenant, member, "member")
 
       conn = log_in_user(conn, admin)
       {:ok, view, _html} = live(conn, ~p"/admin/members?tenant=#{tenant.id}")
@@ -94,8 +77,7 @@ defmodule BeamChatWeb.MemberAdminLiveTest do
     test "a ?tenant= the admin does not belong to falls back to their own tenant", %{conn: conn} do
       global_admin = user_fixture(%{role: "admin"})
       member = registered_user_fixture()
-      other_tenant = management_tenant()
-      join!(other_tenant, member, "member")
+      other_tenant = tenant_with_member(member, "member")
 
       conn = log_in_user(conn, global_admin)
       {:ok, _view, html} = live(conn, ~p"/admin/members?tenant=#{other_tenant.id}")

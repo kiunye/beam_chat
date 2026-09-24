@@ -13,48 +13,24 @@ defmodule BeamChatWeb.MemberAdminLive do
 
   use BeamChatWeb, :live_view
 
-  alias BeamChat.Repo
   alias BeamChat.Tenants
 
   @impl true
   def mount(params, session, socket) do
-    user = socket.assigns.current_user
-    tenants = Tenants.list_tenants_for_user(user)
-    active_id = params["tenant"] || session["active_tenant_id"]
-    tenant = Enum.find(tenants, &(&1.id == active_id)) || List.first(tenants)
-
     socket =
       socket
       |> assign(:page_title, "Members")
-      |> assign(:tenants, tenants)
-      |> assign(:tenant, tenant)
-      |> assign(:tenant_form, to_form(%{"tenant_id" => tenant && tenant.id}, as: :switcher))
+      |> assign_active_tenant(params, session)
 
-    {:ok, stream_members(socket, tenant)}
+    {:ok, stream_members(socket, socket.assigns.tenant)}
   end
 
   @impl true
   def handle_params(params, _uri, socket) do
     socket =
-      case params["tenant"] do
-        nil ->
-          socket
-
-        tenant_id ->
-          tenant = Enum.find(socket.assigns.tenants, &(&1.id == tenant_id))
-
-          if tenant do
-            # Keep the process tenant context in sync with the tenant this
-            # view renders (same reasoning as RoomTreeLive's handle_params).
-            Repo.set_tenant_context(tenant.id, socket.assigns.current_user.id)
-
-            socket
-            |> assign(:tenant, tenant)
-            |> assign(:tenant_form, to_form(%{"tenant_id" => tenant.id}, as: :switcher))
-            |> stream_members(tenant)
-          else
-            socket
-          end
+      case find_tenant(socket.assigns.tenants, params["tenant"]) do
+        nil -> socket
+        tenant -> socket |> activate_tenant(tenant) |> stream_members(tenant)
       end
 
     {:noreply, socket}
@@ -141,10 +117,6 @@ defmodule BeamChatWeb.MemberAdminLive do
     |> stream(:members, members, dom_id: &("member-" <> &1.user_id), reset: true)
   end
 
-  defp tenant_options(tenants) do
-    Enum.map(tenants, &{&1.name, &1.id})
-  end
-
   # ---------------------------------------------------------------------------
   # Rendering
   # ---------------------------------------------------------------------------
@@ -156,19 +128,7 @@ defmodule BeamChatWeb.MemberAdminLive do
       <div class="flex flex-wrap items-center justify-between gap-3">
         <h1 class="text-xl font-display font-semibold text-base-content">Members</h1>
 
-        <.form
-          for={@tenant_form}
-          id="tenant-switcher"
-          phx-change="tenant-selected"
-          class="flex items-center gap-2"
-        >
-          <.input
-            field={@tenant_form[:tenant_id]}
-            type="select"
-            options={tenant_options(@tenants)}
-            label="Tenant"
-          />
-        </.form>
+        <.tenant_switcher tenants={@tenants} form={@tenant_form} />
       </div>
 
       <p :if={!@tenant} class="text-sm text-base-content/60">

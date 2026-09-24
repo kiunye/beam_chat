@@ -10,7 +10,6 @@ defmodule BeamChat.Tenants do
   alias BeamChat.Accounts.User
   alias BeamChat.Audit
   alias BeamChat.Authorization
-  alias BeamChat.Authorization.Scope
   alias BeamChat.Repo
   alias BeamChat.Tenants.Tenant
   alias BeamChat.Tenants.TenantMember
@@ -36,8 +35,8 @@ defmodule BeamChat.Tenants do
   Returns `{:ok, member}` or `{:error, changeset}`.
   """
   def add_member(tenant_or_id, user_or_id, role \\ "member") do
-    tenant_id = resolve_id(tenant_or_id)
-    user_id = resolve_id(user_or_id)
+    tenant_id = Authorization.id_of(tenant_or_id)
+    user_id = Authorization.id_of(user_or_id)
 
     %TenantMember{}
     |> TenantMember.changeset(%{tenant_id: tenant_id, user_id: user_id, role: role})
@@ -73,15 +72,15 @@ defmodule BeamChat.Tenants do
   afterwards, so it is not a lockout risk.
   """
   def remove_member(%User{} = actor, tenant_or_id, user_or_id) do
-    with {:ok, tenant} <- fetch_managed_tenant(tenant_or_id),
-         :ok <- ensure_can_manage(actor, tenant) do
-      do_remove_member(tenant_or_id, user_or_id, actor)
+    with {:ok, tenant} <-
+           Authorization.ensure_tenant_permission(actor, tenant_or_id, :tenant_manage) do
+      do_remove_member(tenant, user_or_id, actor)
     end
   end
 
-  defp do_remove_member(tenant_or_id, user_or_id, actor) do
-    tenant_id = resolve_id(tenant_or_id)
-    user_id = resolve_id(user_or_id)
+  defp do_remove_member(tenant, user_or_id, actor) do
+    tenant_id = tenant.id
+    user_id = Authorization.id_of(user_or_id)
 
     case Repo.get_by(TenantMember, tenant_id: tenant_id, user_id: user_id) do
       nil ->
@@ -119,17 +118,17 @@ defmodule BeamChat.Tenants do
           | {:error, :forbidden | :not_found | :invalid_role | Ecto.Changeset.t()}
   def set_member_role(%User{} = actor, tenant_or_id, user_or_id, role)
       when role in ~w(admin member) do
-    with {:ok, tenant} <- fetch_managed_tenant(tenant_or_id),
-         :ok <- ensure_can_manage(actor, tenant) do
-      do_set_member_role(tenant_or_id, user_or_id, role, actor)
+    with {:ok, tenant} <-
+           Authorization.ensure_tenant_permission(actor, tenant_or_id, :tenant_manage) do
+      do_set_member_role(tenant, user_or_id, role, actor)
     end
   end
 
   def set_member_role(%User{}, _tenant_or_id, _user_or_id, _role), do: {:error, :invalid_role}
 
-  defp do_set_member_role(tenant_or_id, user_or_id, role, actor) do
-    tenant_id = resolve_id(tenant_or_id)
-    user_id = resolve_id(user_or_id)
+  defp do_set_member_role(tenant, user_or_id, role, actor) do
+    tenant_id = tenant.id
+    user_id = Authorization.id_of(user_or_id)
 
     case Repo.get_by(TenantMember, tenant_id: tenant_id, user_id: user_id) do
       nil ->
@@ -162,7 +161,7 @@ defmodule BeamChat.Tenants do
   """
   @spec list_members(struct() | Ecto.UUID.t()) :: [map()]
   def list_members(tenant_or_id) do
-    tenant_id = resolve_id(tenant_or_id)
+    tenant_id = Authorization.id_of(tenant_or_id)
 
     Repo.all(
       from(tm in TenantMember,
@@ -183,23 +182,6 @@ defmodule BeamChat.Tenants do
     )
   end
 
-  # Load the tenant struct for a permission check; :not_found keeps the
-  # error uniform with the membership lookups below.
-  defp fetch_managed_tenant(tenant_or_id) do
-    case get_tenant(resolve_id(tenant_or_id)) do
-      %Tenant{} = tenant -> {:ok, tenant}
-      nil -> {:error, :not_found}
-    end
-  end
-
-  defp ensure_can_manage(%User{} = actor, %Tenant{} = tenant) do
-    if Authorization.can?(Scope.for_user(actor, tenant), :tenant_manage) do
-      :ok
-    else
-      {:error, :forbidden}
-    end
-  end
-
   @doc """
   The user's membership role in the tenant (`"admin"` | `"member"`), or
   `nil` when the user is not a member. Accepts either structs or raw ids
@@ -211,8 +193,8 @@ defmodule BeamChat.Tenants do
   """
   @spec member_role(struct() | Ecto.UUID.t(), struct() | Ecto.UUID.t()) :: String.t() | nil
   def member_role(tenant_or_id, user_or_id) do
-    tenant_id = resolve_id(tenant_or_id)
-    user_id = resolve_id(user_or_id)
+    tenant_id = Authorization.id_of(tenant_or_id)
+    user_id = Authorization.id_of(user_or_id)
 
     Repo.one(
       from(tm in TenantMember,
@@ -227,8 +209,8 @@ defmodule BeamChat.Tenants do
   Accepts either structs or raw ids for either argument.
   """
   def admin?(tenant_or_id, user_or_id) do
-    tenant_id = resolve_id(tenant_or_id)
-    user_id = resolve_id(user_or_id)
+    tenant_id = Authorization.id_of(tenant_or_id)
+    user_id = Authorization.id_of(user_or_id)
 
     Repo.exists?(
       from(tm in TenantMember,
@@ -244,7 +226,7 @@ defmodule BeamChat.Tenants do
   List the tenants a given user is a member of. Accepts a user struct or id.
   """
   def list_tenants_for_user(user_or_id) do
-    user_id = resolve_id(user_or_id)
+    user_id = Authorization.id_of(user_or_id)
 
     Repo.all(
       from(t in Tenant,
@@ -258,8 +240,4 @@ defmodule BeamChat.Tenants do
 
   @doc "A changeset for forms (empty tenant by default)."
   def change_tenant(tenant \\ %Tenant{}), do: Tenant.changeset(tenant, %{})
-
-  # Accept either a struct (with an `:id` field) or a raw id.
-  defp resolve_id(%{id: id}), do: id
-  defp resolve_id(id) when not is_struct(id), do: id
 end

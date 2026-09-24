@@ -11,28 +11,14 @@ defmodule BeamChatWeb.RadioAdminLiveTest do
   import Phoenix.LiveViewTest
 
   alias BeamChat.IngressFake
-  alias BeamChat.Repo
   alias BeamChat.Streaming
-  alias BeamChat.Tenants
 
   defp uniq, do: :erlang.unique_integer([:positive]) |> to_string()
-
-  defp radio_tenant do
-    {:ok, tenant} = Tenants.create_tenant(%{name: "Air " <> uniq(), slug: "air-" <> uniq()})
-    tenant
-  end
-
-  defp join!(tenant, user, role) do
-    Repo.with_tenant(tenant.id, user.id, fn ->
-      {:ok, _} = Tenants.add_member(tenant, user, role)
-    end)
-  end
 
   describe "route gate" do
     test "a plain tenant member is redirected away at mount", %{conn: conn} do
       user = registered_user_fixture()
-      tenant = radio_tenant()
-      join!(tenant, user, "member")
+      tenant = tenant_with_member(user, "member")
 
       conn = log_in_user(conn, user)
 
@@ -51,8 +37,7 @@ defmodule BeamChatWeb.RadioAdminLiveTest do
   describe "station management" do
     test "tenant admin sees stations and creates one via the form", %{conn: conn} do
       admin = registered_user_fixture()
-      tenant = radio_tenant()
-      join!(tenant, admin, "admin")
+      tenant = tenant_with_member(admin, "admin")
       radio_station_fixture(tenant)
 
       conn = log_in_user(conn, admin)
@@ -85,8 +70,7 @@ defmodule BeamChatWeb.RadioAdminLiveTest do
 
     test "tenant admin starts and stops a station through the lifecycle buttons", %{conn: conn} do
       admin = registered_user_fixture()
-      tenant = radio_tenant()
-      join!(tenant, admin, "admin")
+      tenant = tenant_with_member(admin, "admin")
       station = radio_station_fixture(tenant)
 
       conn = log_in_user(conn, admin)
@@ -114,8 +98,7 @@ defmodule BeamChatWeb.RadioAdminLiveTest do
 
     test "a provisioning failure surfaces the error and marks the station", %{conn: conn} do
       admin = registered_user_fixture()
-      tenant = radio_tenant()
-      join!(tenant, admin, "admin")
+      tenant = tenant_with_member(admin, "admin")
       station = radio_station_fixture(tenant)
 
       # The LiveView runs in its own process, so the failure result rides on
@@ -138,8 +121,7 @@ defmodule BeamChatWeb.RadioAdminLiveTest do
 
     test "tenant admin deletes a station", %{conn: conn} do
       admin = registered_user_fixture()
-      tenant = radio_tenant()
-      join!(tenant, admin, "admin")
+      tenant = tenant_with_member(admin, "admin")
       station = radio_station_fixture(tenant)
 
       conn = log_in_user(conn, admin)
@@ -156,8 +138,7 @@ defmodule BeamChatWeb.RadioAdminLiveTest do
 
     test "active rtmp stations show their push endpoint", %{conn: conn} do
       admin = registered_user_fixture()
-      tenant = radio_tenant()
-      join!(tenant, admin, "admin")
+      tenant = tenant_with_member(admin, "admin")
 
       radio_station_fixture(tenant, %{
         source_type: "rtmp",

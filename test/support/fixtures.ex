@@ -110,6 +110,23 @@ defmodule BeamChat.TestFixtures do
     end
   end
 
+  @doc """
+  Create a fresh tenant and make `user` a member of it with `role`,
+  running the membership insert under the tenant GUCs. Returns the
+  tenant — the canonical helper for tests that need a user scoped into
+  a new tenant (admin pages, radio, streaming).
+  """
+  def tenant_with_member(user, role \\ "member") do
+    suffix = unique_suffix()
+    {:ok, tenant} = Tenants.create_tenant(%{name: "T " <> suffix, slug: "t-" <> suffix})
+
+    Repo.with_tenant(tenant.id, user.id, fn ->
+      {:ok, _} = Tenants.add_member(tenant, user, role)
+    end)
+
+    tenant
+  end
+
   def room_category_fixture(attrs \\ %{}) do
     suffix = unique_suffix()
     tenant = tenant_fixture()
@@ -171,9 +188,9 @@ defmodule BeamChat.TestFixtures do
   only the tenant match, and permission gating is exercised through the
   `BeamChat.Streaming` context functions in the streaming tests.
 
-  `:ingress_id` and `:status` are runtime fields (never cast by the
-  changesets); when present in `attrs` they are applied with a direct
-  post-insert change so tests can seed in-flight station states.
+  The runtime fields (`:status`, `:ingress_id`, `:metadata`) are never
+  cast by the changesets, but `Repo.insert/1` persists the whole struct —
+  tests seed in-flight station states straight on the struct.
   """
   def radio_station_fixture(tenant, attrs \\ %{}) do
     suffix = unique_suffix()
@@ -188,31 +205,20 @@ defmodule BeamChat.TestFixtures do
         },
         attrs
       )
-      |> Map.put_new(:tenant_id, tenant.id)
-
-    runtime_changes = Map.take(attrs, [:ingress_id, :status, :metadata])
 
     {:ok, station} =
       Repo.with_tenant(tenant.id, tenant.id, fn ->
-        %RadioStation{tenant_id: tenant.id}
-        |> RadioStation.create_changeset(
-          Map.drop(attrs, [:tenant_id, :ingress_id, :status, :metadata])
-        )
+        %RadioStation{
+          tenant_id: tenant.id,
+          status: Map.get(attrs, :status, "offline"),
+          ingress_id: Map.get(attrs, :ingress_id),
+          metadata: Map.get(attrs, :metadata, %{})
+        }
+        |> RadioStation.create_changeset(attrs)
         |> Repo.insert()
       end)
 
-    apply_runtime_changes(station, runtime_changes, tenant)
-  end
-
-  defp apply_runtime_changes(station, changes, _tenant) when changes == %{}, do: station
-
-  defp apply_runtime_changes(station, changes, tenant) do
-    {:ok, updated} =
-      Repo.with_tenant(tenant.id, tenant.id, fn ->
-        station |> Ecto.Changeset.change(changes) |> Repo.update()
-      end)
-
-    updated
+    station
   end
 
   def room_member_fixture(room, user, attrs \\ %{}) do

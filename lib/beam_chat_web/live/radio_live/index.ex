@@ -16,24 +16,18 @@ defmodule BeamChatWeb.RadioLive.Index do
   use BeamChatWeb, :live_view
 
   alias BeamChat.Streaming
-  alias BeamChat.Tenants
   alias BeamChat.Video.TokenService
 
   @impl true
   def mount(params, session, socket) do
-    user = socket.assigns.current_user
-    tenants = Tenants.list_tenants_for_user(user)
-    active_id = params["tenant"] || session["active_tenant_id"]
-    tenant = Enum.find(tenants, &(&1.id == active_id)) || List.first(tenants)
-
     socket =
       socket
       |> assign(:page_title, "Radio")
-      |> assign(:tenant, tenant)
+      |> assign_active_tenant(params, session)
       |> assign(:active_station_id, nil)
       |> assign(:player_state, :idle)
 
-    {:ok, stream_stations(socket, user, tenant)}
+    {:ok, stream_stations(socket, socket.assigns.current_user, socket.assigns.tenant)}
   end
 
   @impl true
@@ -64,7 +58,7 @@ defmodule BeamChatWeb.RadioLive.Index do
           </div>
 
           <div class="flex items-center gap-2 shrink-0">
-            <span class={["badge badge-sm", status_badge(station.status)]}>{station.status}</span>
+            <.station_status_badge status={station.status} />
 
             <div id={"player-#{station.id}"} phx-hook="RadioPlayer" data-room={room_name(station)}>
               <button
@@ -132,7 +126,7 @@ defmodule BeamChatWeb.RadioLive.Index do
         {:noreply, station_gone(socket)}
 
       station ->
-        socket = disconnect_previous(socket)
+        socket = disconnect_active(socket)
         room = room_name(station)
 
         case TokenService.generate_listener_token(user, room) do
@@ -218,19 +212,10 @@ defmodule BeamChatWeb.RadioLive.Index do
     |> stream_stations(socket.assigns.current_user, socket.assigns.tenant)
   end
 
-  # One station at a time: tear down the previous stream before a new one.
-  defp disconnect_previous(socket) do
-    previous = active_station(socket)
-
-    if previous do
-      disconnect_active(socket)
-    else
-      socket
-    end
-  end
-
+  # One station at a time: disconnect_active is nil-safe, so starting a new
+  # station first tears down the previous stream (if any).
   defp disconnect_active(socket) do
-    case active_station(socket) do
+    case find_active_station(socket, socket.assigns.active_station_id) do
       nil ->
         socket
 
@@ -241,19 +226,5 @@ defmodule BeamChatWeb.RadioLive.Index do
     end
   end
 
-  defp active_station(socket) do
-    with id when not is_nil(id) <- socket.assigns.active_station_id,
-         %{} = station <- Enum.find(socket.assigns.stations_list || [], &(&1.id == id)) do
-      station
-    else
-      _ -> nil
-    end
-  end
-
   defp room_name(%{} = station), do: Streaming.livekit_room_name(station)
-
-  defp status_badge("live"), do: "badge-success"
-  defp status_badge("starting"), do: "badge-warning"
-  defp status_badge("error"), do: "badge-error"
-  defp status_badge(_other), do: "badge-ghost"
 end
