@@ -151,4 +151,45 @@ defmodule BeamChat.Video.TokenServiceTest do
       assert {:error, _} = TokenService.verify_token("not.a.real-jwt")
     end
   end
+
+  describe "generate_listener_token/3" do
+    test "issues a subscribe-only token scoped to the station room" do
+      user = %User{id: "11111111-1111-1111-1111-111111111111", username: "alice"}
+      room = "radio-horn-fm"
+
+      assert {:ok, payload} = TokenService.generate_listener_token(user, room)
+
+      assert payload.url == "ws://test.livekit.local"
+      assert payload.room == "radio-horn-fm"
+      assert payload.identity == "user-11111111-1111-1111-1111-111111111111"
+      assert is_binary(payload.token)
+
+      assert {:ok, claims} = TokenService.verify_token(payload.token)
+
+      assert claims["sub"] == "user-11111111-1111-1111-1111-111111111111"
+      assert claims["iss"] == "test_api_key_xxxxxxxxxxxxxxxxxxxxxx"
+      assert get_in(claims, ["video", "room"]) == "radio-horn-fm"
+      assert get_in(claims, ["video", "roomJoin"]) == true
+      assert get_in(claims, ["video", "canSubscribe"]) == true
+      assert get_in(claims, ["video", "canPublish"]) == false
+      assert get_in(claims, ["video", "canPublishData"]) == false
+    end
+
+    test "listener tokens carry the same short default TTL" do
+      user = %User{id: "11111111-1111-1111-1111-111111111111", username: "alice"}
+
+      {:ok, %{token: jwt}} = TokenService.generate_listener_token(user, "radio-horn-fm")
+      assert {:ok, claims} = TokenService.verify_token(jwt)
+
+      assert_in_delta claims["exp"] - claims["nbf"], 600, 5
+    end
+
+    test "returns :not_configured when livekit is not set up" do
+      Application.put_env(:livekit, :api_key, "")
+      user = %User{id: "11111111-1111-1111-1111-111111111111", username: "alice"}
+
+      assert {:error, :not_configured} =
+               TokenService.generate_listener_token(user, "radio-horn-fm")
+    end
+  end
 end

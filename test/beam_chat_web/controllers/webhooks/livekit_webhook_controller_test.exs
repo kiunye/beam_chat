@@ -63,8 +63,6 @@ defmodule BeamChatWeb.Webhooks.LivekitWebhookControllerTest do
     end
 
     test "an invalid signature is rejected", %{conn: conn} do
-      active_station()
-
       raw = Jason.encode!(%{"event" => "ingress_started", "ingressInfo" => %{"ingressId" => "x"}})
 
       signer = Joken.Signer.create("HS256", "wrong-secret")

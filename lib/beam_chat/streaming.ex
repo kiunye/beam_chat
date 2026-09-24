@@ -68,6 +68,16 @@ defmodule BeamChat.Streaming do
   end
 
   @doc """
+  The tenant's *active* stations — the listener-facing lineup. Inactive
+  stations are excluded so the public player never lists dead sources.
+  """
+  @spec list_active_stations(struct() | Ecto.UUID.t(), struct() | Ecto.UUID.t()) :: [station()]
+  def list_active_stations(user_or_id, tenant_or_id) do
+    list_stations(user_or_id, tenant_or_id)
+    |> Enum.filter(& &1.is_active)
+  end
+
+  @doc """
   Create a station in `tenant`. The actor must hold `:radio_manage`.
 
   Returns `{:ok, station}`, `{:error, :forbidden | :not_found}`, or
