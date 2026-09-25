@@ -13,6 +13,7 @@ defmodule BeamChatWeb.MemberAdminLive do
 
   use BeamChatWeb, :live_view
 
+  alias BeamChat.Accounts
   alias BeamChat.Tenants
 
   @impl true
