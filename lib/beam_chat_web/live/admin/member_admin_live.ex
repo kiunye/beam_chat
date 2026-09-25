@@ -45,6 +45,10 @@ defmodule BeamChatWeb.MemberAdminLive do
     {:noreply, push_patch(socket, to: ~p"/admin/members?tenant=#{tenant_id}")}
   end
 
+  def handle_event("add-member", %{"add_member" => fields}, socket) do
+    do_add_member(socket, fields)
+  end
+
   def handle_event("set-role", %{"user_id" => user_id, "role" => role}, socket) do
     case Tenants.set_member_role(
            socket.assigns.current_user,
@@ -117,6 +121,32 @@ defmodule BeamChatWeb.MemberAdminLive do
     |> stream(:members, members, dom_id: &("member-" <> &1.user_id), reset: true)
   end
 
+  defp do_add_member(socket, fields) do
+    email = String.trim(fields["email"] || "")
+    role = fields["role"] || "member"
+    user = Accounts.get_user_by_email(email)
+
+    cond do
+      email == "" ->
+        put_flash(socket, :error, "Enter the member's email address.")
+
+      user == nil ->
+        put_flash(socket, :error, "No registered user with that email.")
+
+      true ->
+        case Tenants.add_member(socket.assigns.tenant, user.id, role) do
+          {:ok, _member} ->
+            socket
+            |> put_flash(:info, "Member added.")
+            |> stream_members(socket.assigns.tenant)
+
+          {:error, _} ->
+            put_flash(socket, :error, "Could not add the member.")
+        end
+    end
+    |> then(&{:noreply, &1})
+  end
+
   # ---------------------------------------------------------------------------
   # Rendering
   # ---------------------------------------------------------------------------
@@ -126,10 +156,58 @@ defmodule BeamChatWeb.MemberAdminLive do
     ~H"""
     <div class="max-w-4xl mx-auto space-y-4">
       <div class="flex flex-wrap items-center justify-between gap-3">
-        <h1 class="text-xl font-display font-semibold text-base-content">Members</h1>
+        <div>
+          <h1 class="text-xl font-display font-semibold text-base-content">Members</h1>
 
-        <.tenant_switcher tenants={@tenants} form={@tenant_form} />
+          <p class="text-sm text-base-content/70 mt-0.5">
+            Grant and revoke membership for active users in this tenant.
+          </p>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <.tenant_switcher tenants={@tenants} form={@tenant_form} />
+        </div>
       </div>
+
+      <%= if @tenant do %>
+        <div class="rounded-box border border-base-300 bg-base-100 p-4" id="member-add-panel">
+          <h2 class="text-sm font-semibold text-base-content">Add member</h2>
+
+          <p class="mt-1 text-xs text-base-content/55">
+            Enter the email of an existing account to grant room access.
+          </p>
+
+          <.form
+            for={to_form(%{"email" => "", "role" => "member"}, as: :add_member)}
+            id="member-add-form"
+            phx-submit="add-member"
+            class="mt-3 flex gap-2"
+          >
+            <div class="flex-1">
+              <.input
+                name="add_member[email]"
+                type="email"
+                label="Email"
+                placeholder="user@county.ke"
+                value=""
+                required
+              />
+            </div>
+            <div class="w-40">
+              <.input
+                name="add_member[role]"
+                type="select"
+                label="Role"
+                options={[{"Member", "member"}, {"Admin", "admin"}]}
+                value="member"
+              />
+            </div>
+            <div class="self-end">
+              <.button type="submit" class="btn btn-primary btn-sm">Add member</.button>
+            </div>
+          </.form>
+        </div>
+      <% end %>
 
       <p :if={!@tenant} class="text-sm text-base-content/60">
         You are not a member of any tenant yet.
