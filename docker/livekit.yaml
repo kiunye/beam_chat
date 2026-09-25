@@ -28,7 +28,8 @@ logging:
   level: info
 
 webhook:
+  # LiveKit signs webhook requests with the secret paired to this key in the
+  # `keys:` map above; WebHookConfig only accepts `api_key` and `urls`.
   api_key: devkey
-  api_secret: secret
   urls:
     - http://host.docker.internal:4000/webhooks/livekit
