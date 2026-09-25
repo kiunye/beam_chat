@@ -25,15 +25,18 @@ defmodule BeamChatWeb.WalletLive.Index do
 
     {:ok,
      socket
-     |> assign(:page_title, "Wallet")
+     |> assign(:page_title, "County wallet")
+     |> assign(:active_tab, :wallet)
+     |> assign(:topup_provider, :mpesa)
      |> assign(:wallet, wallet)
      |> assign(:txn_page, 1)
      |> assign(:txn_has_more, has_more)
+     |> assign(:subscriptions, Wallet.list_active_subscriptions(user.id))
      |> assign(:paystack_form, to_form(%{"amount" => ""}, as: :paystack))
      |> assign(:mpesa_form, to_form(%{"amount" => "", "phone" => ""}, as: :mpesa))
      |> assign(:staff_form, to_form(%{"email" => "", "amount" => "", "note" => ""}, as: :staff))
      |> assign(:show_staff_panel, show_staff_panel?(socket.assigns[:current_scope]))
-     |> stream(:transactions, txns, dom_id: &("txn-" <> &1.id))}
+     |> stream(:transactions, txns, reset: true, dom_id: &("txn-" <> &1.id))}
   end
 
   defp show_staff_panel?(scope) do
@@ -60,6 +63,29 @@ defmodule BeamChatWeb.WalletLive.Index do
 
   def handle_event("refresh_wallet", _, socket) do
     {:noreply, refresh_wallet_view(socket)}
+  end
+
+  def handle_event("topup-provider", %{"provider" => provider}, socket)
+      when provider in ["mpesa", "paystack"] do
+    {:noreply, assign(socket, :topup_provider, String.to_existing_atom(provider))}
+  end
+
+  # The preset amount chips set the amount on BOTH provider forms so the
+  # user's chosen amount survives switching between M-Pesa and Paystack.
+  def handle_event("topup-amount", %{"amount" => amount}, socket) do
+    {:noreply,
+     socket
+     |> assign(
+       :paystack_form,
+       to_form(%{"amount" => amount, "phone" => ""}, as: :paystack)
+     )
+     |> assign(
+       :mpesa_form,
+       to_form(
+         %{"amount" => amount, "phone" => form_value(socket.assigns.mpesa_form, :phone)},
+         as: :mpesa
+       )
+     )}
   end
 
   def handle_event("load_more", _, socket) do
@@ -279,154 +305,468 @@ defmodule BeamChatWeb.WalletLive.Index do
 
   defp parse_amount(_), do: :error
 
+  defp form_value(form, key), do: (form[key] && form[key].value) || ""
+
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="space-y-8" id="wallet-page">
-      <!-- Header -->
-      <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 class="font-display text-2xl font-semibold tracking-tight text-base-content">Wallet</h1>
+    <div class="space-y-6" id="wallet-page">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div class="space-y-1">
+          <p class="text-label-sm uppercase tracking-[0.12em] text-slate-500">
+            Treasury clearance unit
+          </p>
 
-          <p class="text-sm text-base-content/70 mt-1">
-            Top up with Paystack or M-Pesa, then subscribe to paid rooms from your balance.
+          <h1 class="font-display text-headline-lg tracking-tight text-slate-900">
+            County officer & citizen wallet
+          </h1>
+
+          <p class="text-sm text-slate-600">
+            Top up with M-Pesa STK push or Paystack, then subscribe to paid rooms from your balance.
           </p>
         </div>
 
         <button
           type="button"
           phx-click="refresh_wallet"
-          class="btn btn-outline btn-sm"
+          class="btn btn-outline btn-sm rounded-md border-slate-300 bg-white"
           id="wallet-refresh"
         >
           Refresh
         </button>
       </div>
-      <!-- Balance Display as Vault -->
-      <div class="rounded-box border border-base-300 bg-base-100 p-6 shadow-sm">
-        <p class="text-xs font-semibold uppercase tracking-wide text-base-content/60 mb-2">Balance</p>
 
-        <div class="flex items-end gap-2">
-          <p class="font-display text-3xl font-semibold text-base-content tabular-nums">
-            {format_money(@wallet.balance)}
+      <div class="grid gap-4 lg:grid-cols-3">
+        <div class="rounded-lg bg-emerald-800 p-6 text-white shadow-civic-2">
+          <div class="flex items-start justify-between gap-3">
+            <p class="text-label-sm uppercase tracking-[0.12em] text-emerald-200/70">
+              Sovereign wallet vault
+            </p>
+            <.icon name="hero-shield-check" class="size-5 text-emerald-300/70" />
+          </div>
+
+          <p class="text-label-md text-emerald-200/80 mt-1">Available balance</p>
+
+          <div class="mt-2 flex items-end gap-2">
+            <p class="font-display text-4xl font-bold leading-none tracking-tight tabular-nums">
+              {format_money(@wallet.balance)}
+            </p>
+
+            <p class="text-sm text-emerald-200/80 mb-1">{@wallet.currency}</p>
+          </div>
+
+          <div
+            :if={@subscriptions != []}
+            class="mt-4 inline-flex items-center gap-2 rounded-full bg-emerald-700/70 px-3 py-1.5 text-label-sm text-emerald-100"
+          >
+            <span class="size-1.5 rounded-full bg-emerald-300" /> Auto-renew · Active
+          </div>
+        </div>
+
+        <div class="rounded-lg border border-slate-200 bg-white p-6 shadow-civic-2">
+          <p class="text-label-sm uppercase tracking-[0.12em] text-slate-500">Municipal channels</p>
+
+          <p class="mt-2 font-display text-headline-lg text-slate-900">
+            {length(@subscriptions)} gated room{if length(@subscriptions) == 1, do: "", else: "s"}
           </p>
 
-          <p class="text-sm text-base-content/60 mb-1">{@wallet.currency}</p>
+          <p class="mt-1 text-sm text-slate-600">
+            Monthly outflow:
+            <span class="tnum font-semibold text-slate-900">
+              {format_money(monthly_outflow(@subscriptions))} {@wallet.currency}
+            </span>
+          </p>
+
+          <p :if={@subscriptions != []} class="mt-3 text-xs text-slate-500">
+            Next billing:
+            <span class="tnum font-medium text-slate-700">{next_billing(@subscriptions)}</span>
+          </p>
+        </div>
+
+        <div class="rounded-lg border border-slate-200 bg-white p-6 shadow-civic-2">
+          <p class="text-label-sm uppercase tracking-[0.12em] text-slate-500">
+            Safaricom Daraja engine
+          </p>
+
+          <p class="mt-2 text-sm font-medium text-slate-900">M-Pesa rail identity</p>
+
+          <p class="mt-1 font-mono text-code-sm text-slate-800">
+            {phone_mask(assigns[:current_user].phone)}
+          </p>
+
+          <div class="mt-3 inline-flex items-center gap-2 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 px-2.5 py-1 text-label-sm">
+            {if assigns[:current_user].phone in [nil, ""], do: "Not linked", else: "Verified"}
+          </div>
         </div>
       </div>
-      <!-- Top-up Methods -->
-      <div class="grid gap-6 lg:grid-cols-2">
-        <!-- Paystack -->
+
+      <div class="grid gap-4 lg:grid-cols-3 items-start">
         <section
-          class="rounded-box border border-base-300 bg-base-100 p-5 space-y-4"
-          id="paystack-topup"
+          class="rounded-lg border border-slate-200 bg-white p-5 shadow-civic-2 lg:col-span-2"
+          id="fund-wallet"
         >
-          <h2 class="font-display font-semibold text-lg text-base-content">Paystack</h2>
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <h2 class="font-display text-headline-sm text-slate-900">Fund the wallet</h2>
 
-          <.form
-            for={@paystack_form}
-            phx-submit="paystack_topup"
-            id="paystack-topup-form"
-            class="space-y-3"
-          >
-            <.input
-              field={@paystack_form[:amount]}
-              type="text"
-              label="Amount (KES)"
-              placeholder="0.00"
-              required
-            />
-            <button
-              type="submit"
-              class="btn btn-primary w-full sm:w-auto"
+            <div class="flex rounded-md bg-slate-100 p-0.5" role="tablist" aria-label="Payment rail">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={@topup_provider == :mpesa}
+                phx-click="topup-provider"
+                phx-value-provider="mpesa"
+                class={[
+                  "rounded-md px-3 py-1.5 text-sm font-medium",
+                  @topup_provider == :mpesa && "bg-white text-slate-900 shadow-sm",
+                  @topup_provider != :mpesa && "text-slate-500 hover:text-slate-800"
+                ]}
+                id="rail-mpesa"
+              >
+                M-Pesa STK
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={@topup_provider == :paystack}
+                phx-click="topup-provider"
+                phx-value-provider="paystack"
+                class={[
+                  "rounded-md px-3 py-1.5 text-sm font-medium",
+                  @topup_provider == :paystack && "bg-white text-slate-900 shadow-sm",
+                  @topup_provider != :paystack && "text-slate-500 hover:text-slate-800"
+                ]}
+                id="rail-paystack"
+              >
+                Paystack
+              </button>
+            </div>
+          </div>
+
+          <div class="mt-4 space-y-3">
+            <p class="text-label-sm text-slate-500">Amount (KES)</p>
+
+            <div class="flex flex-wrap gap-2" id="amount-chips">
+              <button
+                :for={amount <- ["500", "1,000", "2,500", "5,000"]}
+                type="button"
+                phx-click="topup-amount"
+                phx-value-amount={amount}
+                class={[
+                  "rounded-md border px-3 py-2 text-sm font-semibold",
+                  active_amount?(assigns, amount) && "border-emerald-600 bg-emerald-600 text-white",
+                  !active_amount?(assigns, amount) &&
+                    "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                ]}
+              >
+                {amount}
+              </button>
+            </div>
+          </div>
+
+          <%= if @topup_provider == :mpesa do %>
+            <.form
+              for={@mpesa_form}
+              id="mpesa-topup-form"
+              phx-submit="mpesa_topup"
+              class="mt-4 space-y-3"
             >
-              Pay with Paystack
-            </button>
-          </.form>
-        </section>
-        <!-- M-Pesa -->
-        <section class="rounded-box border border-base-300 bg-base-100 p-5 space-y-4" id="mpesa-topup">
-          <h2 class="font-display font-semibold text-lg text-base-content">M-Pesa</h2>
+              <.input
+                field={@mpesa_form[:amount]}
+                type="text"
+                label="Amount (KES)"
+                placeholder="0.00"
+                required
+                class="tnum"
+                id="mpesa-amount-input"
+              />
+              <.input
+                field={@mpesa_form[:phone]}
+                type="text"
+                label="Phone (Safaricom)"
+                placeholder="07XX XXX XXX"
+                required
+                class="tnum"
+              />
+              <p class="text-xs text-slate-500">
+                The push lands instantly on your Safaricom line; posting settles via the webhook callback.
+              </p>
 
-          <.form for={@mpesa_form} phx-submit="mpesa_topup" id="mpesa-topup-form" class="space-y-3">
-            <.input
-              field={@mpesa_form[:amount]}
-              type="text"
-              label="Amount (KES)"
-              placeholder="0.00"
-              required
-            />
-            <.input
-              field={@mpesa_form[:phone]}
-              type="text"
-              label="Phone (Safaricom)"
-              placeholder="07XXXXXXXX"
-              required
-            /> <button type="submit" class="btn btn-primary w-full sm:w-auto">Send STK push</button>
-          </.form>
+              <button type="submit" class="btn btn-primary w-full rounded-md">
+                Send M-Pesa STK prompt{if socket_amount(@mpesa_form) != "",
+                  do: " · KES " <> socket_amount(@mpesa_form),
+                  else: ""}
+              </button>
+            </.form>
+          <% else %>
+            <.form
+              for={@paystack_form}
+              id="paystack-topup-form"
+              phx-submit="paystack_topup"
+              class="mt-4 space-y-3"
+            >
+              <.input
+                field={@paystack_form[:amount]}
+                type="text"
+                label="Amount (KES)"
+                placeholder="0.00"
+                required
+                class="tnum"
+                id="paystack-amount-input"
+              />
+              <p class="text-xs text-slate-500">
+                Paystack card or bank transfer; you are redirected to the hosted checkout to finish.
+              </p>
+
+              <button type="submit" class="btn btn-secondary w-full rounded-md">
+                Pay with Paystack
+              </button>
+            </.form>
+          <% end %>
+        </section>
+
+        <section
+          class="rounded-lg border border-slate-200 bg-white p-5 shadow-civic-2"
+          id="gated-rooms"
+        >
+          <h2 class="font-display text-headline-sm text-slate-900">Active gated rooms</h2>
+
+          <p :if={@subscriptions == []} class="mt-3 text-sm text-slate-500">
+            None active — subscribe from a paid room.
+          </p>
+
+          <ul
+            :for={sub <- @subscriptions}
+            :if={@subscriptions != []}
+            class="mt-4 space-y-3 text-sm"
+            id="gated-room-rows"
+          >
+            <li class="rounded-md border border-slate-200 p-3">
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <p class="font-semibold text-slate-900 truncate">{sub.room.name}</p>
+
+                  <p class="tnum mt-0.5 text-xs text-emerald-700">
+                    {format_money(sub.room.price)} {sub.room.currency} / 30d
+                  </p>
+
+                  <p class="mt-1 flex items-center gap-1.5 text-label-sm text-slate-500">
+                    <span class="size-1.5 rounded-full bg-emerald-500" />
+                    Active · renews in {days_left(sub.expires_at)}d
+                  </p>
+                </div>
+
+                <.link
+                  navigate={~p"/rooms/#{sub.room.slug}"}
+                  class="btn btn-outline btn-xs rounded-md text-xs shrink-0"
+                >
+                  Open
+                </.link>
+              </div>
+            </li>
+          </ul>
         </section>
       </div>
-      <!-- Staff Credit Panel -->
+
       <section
         :if={@show_staff_panel}
-        class="rounded-box border border-warning/40 bg-warning/5 p-5 space-y-3"
+        class="rounded-lg border border-amber-200 bg-amber-50/60 p-5 space-y-3 shadow-civic-2"
         id="staff-wallet-credit"
       >
-        <h2 class="font-display font-semibold text-lg text-base-content">Staff / dev credit</h2>
+        <h2 class="font-display text-headline-sm text-slate-900">Staff / dev credit</h2>
 
-        <p class="text-sm text-base-content/75">
-          Credit another user by email (moderators, admins, or dev mode).
-        </p>
+        <p class="text-sm text-slate-700">Credit another user by email (admins or dev mode only).</p>
 
         <.form for={@staff_form} phx-submit="staff_credit" id="staff-credit-form" class="space-y-3">
           <.input field={@staff_form[:email]} type="email" label="User email" required />
           <.input field={@staff_form[:amount]} type="text" label="Amount (KES)" required />
           <.input field={@staff_form[:note]} type="text" label="Note" required />
-          <button type="submit" class="btn btn-warning btn-sm">Apply credit</button>
+          <button type="submit" class="btn btn-warning btn-sm rounded-md">Apply credit</button>
         </.form>
       </section>
-      <!-- Transaction History -->
-      <section class="rounded-box border border-base-300 bg-base-100 p-5" id="wallet-transactions">
-        <h2 class="font-display font-semibold text-lg mb-3">Recent activity</h2>
 
-        <div id="wallet-txns" phx-update="stream" class="space-y-2">
-          <p class="hidden only:block text-sm text-base-content/60 py-4">No transactions yet.</p>
+      <section
+        class="rounded-lg border border-slate-200 bg-white shadow-civic-2"
+        id="wallet-transactions"
+      >
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
+          <div>
+            <h2 class="font-display text-headline-md text-slate-900">Wallet transaction history</h2>
 
-          <div
-            :for={{tid, txn} <- @streams.transactions}
-            id={tid}
-            class="flex flex-wrap justify-between gap-2 text-sm border-b border-base-300/60 pb-2 last:border-b-0 last:pb-0"
-          >
-            <div>
-              <span class="font-medium text-base-content">{txn.description}</span>
-              <span class="block text-xs text-base-content/55">{txn.type} · {txn.status}</span>
-            </div>
-
-            <div class="text-right tabular-nums">
-              <span class={if(txn.type == "credit", do: "text-success", else: "text-base-content")}>
-                {if(txn.type == "credit", do: "+", else: "-")}{format_money(txn.amount)}
-              </span>
-              <span class="block text-xs text-base-content/50">
-                {Calendar.strftime(txn.inserted_at, "%Y-%m-%d %H:%M")}
-              </span>
-            </div>
+            <p class="text-sm text-slate-500">Signed receipts for municipal audits.</p>
           </div>
+          <label for="txn-filter" class="sr-only">Filter transactions</label>
+          <input
+            id="txn-filter"
+            type="search"
+            placeholder="Filter references…"
+            autocomplete="off"
+            phx-hook=".TxnFilter"
+            class="w-56 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
+          />
         </div>
 
-        <%= if @txn_has_more do %>
+        <div class="overflow-x-auto">
+          <table class="table">
+            <thead>
+              <tr class="text-xs uppercase tracking-wide text-slate-500">
+                <th class="font-semibold">Date &amp; time</th>
+
+                <th class="font-semibold">Description</th>
+
+                <th class="font-semibold">Provider</th>
+
+                <th class="font-semibold">Reference</th>
+
+                <th class="font-semibold">Type</th>
+
+                <th class="font-semibold">Status</th>
+
+                <th class="font-semibold text-right">Amount</th>
+              </tr>
+            </thead>
+
+            <tbody id="wallet-txns" phx-update="stream">
+              <tr class="hidden only:table-row">
+                <td colspan="7" class="text-center text-sm text-slate-500 py-8">
+                  No transactions yet.
+                </td>
+              </tr>
+
+              <tr
+                :for={{tid, txn} <- @streams.transactions}
+                id={tid}
+                data-txn-row={txn.id}
+                class="hover:bg-slate-50"
+              >
+                <td class="whitespace-nowrap text-xs text-slate-600 tnum">
+                  {Calendar.strftime(txn.inserted_at, "%Y-%m-%d %H:%M")}
+                </td>
+
+                <td class="text-sm text-slate-900 font-medium">{txn.description}</td>
+
+                <td class="text-xs text-slate-600">{txn.provider}</td>
+
+                <td class="font-mono text-code-sm text-slate-600">{txn.reference || "—"}</td>
+
+                <td class="text-xs">
+                  <span class={[
+                    "badge badge-xs rounded-full px-2 py-0.5 font-semibold",
+                    txn.type == "credit" && "bg-emerald-50 text-emerald-700 border border-emerald-200",
+                    txn.type != "credit" && "bg-slate-100 text-slate-700 border border-slate-200"
+                  ]}>
+                    {txn_type_label(txn.type)}
+                  </span>
+                </td>
+
+                <td class="text-xs">
+                  <span class={[
+                    "badge badge-xs rounded-full px-2 py-0.5 font-semibold",
+                    txn_badge_status(txn.status)
+                  ]}>
+                    {txn.status}
+                  </span>
+                </td>
+
+                <td class="text-right font-semibold tabular-nums text-sm">
+                  {if txn.type == "credit", do: "+", else: "-"}&nbsp;{format_money(txn.amount)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div :if={@txn_has_more} class="border-t border-slate-200 px-5 py-4">
           <button
-            id="load-more-txns"
             type="button"
             phx-click="load_more"
-            class="mt-4 w-full rounded-box border border-base-300 bg-base-200 px-4 py-2 text-sm font-medium text-base-content transition hover:border-base-content/40 hover:bg-base-300"
+            id="load-more-txns"
+            class="btn btn-outline btn-sm w-full rounded-md border-slate-300"
           >
             Load more
           </button>
-        <% end %>
+        </div>
       </section>
     </div>
+
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".TxnFilter">
+      export default {
+        mounted() {
+          this.el.addEventListener("input", () => this.apply())
+        },
+        apply() {
+          const q = this.el.value.trim().toLowerCase()
+          document.querySelectorAll("[data-txn-row]").forEach((el) => {
+            el.style.display = el.textContent.toLowerCase().includes(q) ? "" : "none"
+          })
+        },
+      }
+    </script>
     """
   end
 
+  # ---------------------------------------------------------------------------
+  # Helpers
+  # ---------------------------------------------------------------------------
+
+  defp phone_mask(nil), do: "Not linked"
+  defp phone_mask(""), do: "Not linked"
+
+  defp phone_mask(phone) when is_binary(phone) do
+    case String.length(phone) do
+      len when len <= 4 -> phone
+      len -> String.slice(phone, 0, 4) <> String.duplicate(" *", len - 4)
+    end
+  end
+
+  defp monthly_outflow(subscriptions) do
+    subscriptions
+    |> Enum.map(fn sub ->
+      Map.get(sub, :price) || Map.get(sub, :room_price) || room_price(sub)
+    end)
+    |> Enum.reduce(Decimal.new(0), &Decimal.add/2)
+  end
+
+  defp room_price(%{room: %{price: price}}) when is_struct(price, Decimal), do: price
+  defp room_price(_), do: Decimal.new(0)
+
+  defp next_billing(subscriptions) when is_list(subscriptions) do
+    subscriptions
+    |> Enum.map(&Map.get(&1, :expires_at))
+    |> Enum.reject(&is_nil/1)
+    |> case do
+      [] -> ""
+      dates -> dates |> Enum.min(DateTime) |> Calendar.strftime("%d %b %Y")
+    end
+  end
+
+  defp days_left(nil), do: 0
+
+  defp days_left(%DateTime{} = expires_at) do
+    max(DateTime.diff(expires_at, DateTime.utc_now()), 0) |> div(86_400)
+  end
+
+  defp txn_type_label("credit"), do: "Top-up"
+  defp txn_type_label("debit"), do: "Charge"
+  defp txn_type_label(other), do: other
+
+  defp txn_badge_status("completed"),
+    do: "bg-emerald-50 text-emerald-700 border border-emerald-200"
+
+  defp txn_badge_status("pending"), do: "bg-amber-50 text-amber-800 border border-amber-200"
+  defp txn_badge_status("failed"), do: "bg-red-50 text-red-700 border border-red-200"
+  defp txn_badge_status(_other), do: "bg-slate-100 text-slate-700 border border-slate-200"
+
+  defp active_amount?(assigns, amount) do
+    current =
+      case assigns[:topup_provider] do
+        :paystack -> socket_amount(assigns[:paystack_form])
+        _ -> socket_amount(assigns[:mpesa_form])
+      end
+
+    current == amount
+  end
+
   defp format_money(%Decimal{} = d), do: Decimal.round(d, 2) |> Decimal.to_string(:normal)
+
+  defp socket_amount(form), do: (form[:amount] && form[:amount].value) || ""
 end
