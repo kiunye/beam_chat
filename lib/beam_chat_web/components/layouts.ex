@@ -11,6 +11,36 @@ defmodule BeamChatWeb.Layouts do
   # and other static content.
   embed_templates "layouts/*"
 
+  @doc "The running application version, from the installed app spec."
+  def beamchat_version do
+    :beam_chat |> Application.spec(:vsn) |> to_string()
+  end
+
+  @doc """
+  Workspace tab in the top bar. Active state tracks the page's
+  `:active_tab` assign (`:rooms`, `:channel`, `:messages`, `:wallet`,
+  `:admin`) so navigation reads current instead of colored guesswork.
+  """
+  attr :tab, :atom, required: true
+  attr :active_tab, :atom, default: nil
+  attr :label, :string, required: true
+  attr :to, :any, required: true
+
+  def topbar_tab(assigns) do
+    ~H"""
+    <.link
+      navigate={@to}
+      class={[
+        "whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition-colors",
+        @active_tab == @tab && "bg-emerald-600 text-white",
+        @active_tab != @tab && "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+      ]}
+    >
+      {@label}
+    </.link>
+    """
+  end
+
   @doc """
   Shows the flash group with standard titles and content.
 

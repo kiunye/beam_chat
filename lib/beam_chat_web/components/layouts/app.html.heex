@@ -1,124 +1,274 @@
 <a href="#main-content" class="skip-link">Skip to main content</a>
 
-<div class="min-h-dvh flex flex-col bg-base-100 text-base-content font-sans antialiased">
-  <!-- Sidebar Rail - Dark Navigation -->
-  <aside class="sidebar-rail hidden lg:block">
-    <div class="flex flex-col h-full overflow-y-auto">
-      <!-- Logo / Brand Header -->
-      <div class="p-4 border-b border-base-300">
-        <div class="flex items-center gap-3">
-          <div class="w-10 h-10 rounded-box bg-primary text-primary-content flex items-center justify-center">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              class="h-6 w-6"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M12 2L15.09 8.26l6.41 1.88c.94.28 1.37 1.16 1.11 2.11l-2.2 9.16c-.29 1.24-1.13 2.18-2.35 2.29L12 18c-2.21 0-4.07-1.27-4.87-3.23L4.88 12c-1.24-.29-2.18-1.13-2.29-2.35L1 12c0-1.7 1.3-3.1 3-3.1v-.09c0 .58 2.4 4.63 7.5 8.43 5.1-3.8 7.5-7.83 7.5-8.42V9c0-1.1-.9-2-2-2H5"
-              />
-            </svg>
-          </div>
-          <span class="font-display font-bold text-xl text-base-content">Beam Chat</span>
+<div class="min-h-dvh bg-slate-50 text-slate-900 font-sans antialiased">
+  <div class="flex min-h-dvh">
+    <!-- Tenancy rail — dark, structural (Civic Vanguard §Layout) -->
+    <aside class="hidden md:flex md:w-72 lg:w-80 shrink-0 flex-col bg-slate-900 text-slate-200 h-dvh sticky top-0">
+      <!-- Brand -->
+      <div class="flex items-center gap-3 px-5 h-16 border-b border-slate-800">
+        <img src={~p"/images/logo.svg"} alt="BeamChat logo" class="h-9 w-8 shrink-0" />
+        <div class="min-w-0 flex-1">
+          <p class="text-headline-sm text-white truncate">BeamChat</p>
+          <p class="text-label-sm tracking-[0.12em] uppercase text-slate-400">Civic Mesh OS</p>
         </div>
+        <.icon name="hero-cog-6-tooth" class="size-4 text-slate-500" />
       </div>
       
-<!-- Navigation Links -->
-      <nav class="flex-1 p-2">
-        <ul class="space-y-1">
-          <li>
-            <.link
-              navigate={~p"/"}
-              class="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-base-content hover:bg-base-200 hover:text-base-content"
-            >
-              <.icon name="hero-home" class="w-5 h-5" />
-              <span>Home</span>
-            </.link>
-          </li>
-          <%= if assigns[:current_user] do %>
-            <li>
-              <.link
-                navigate={~p"/rooms"}
-                class="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-base-content hover:bg-base-200 hover:text-base-content"
-              >
-                <.icon name="hero-squares-2x2" class="w-5 h-5" />
-                <span>Rooms</span>
-              </.link>
-            </li>
-            <li>
-              <.link
-                navigate={~p"/messages"}
-                class="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-base-content hover:bg-base-200 hover:text-base-content"
-              >
-                <.icon name="hero-chat-globe" class="w-5 h-5" />
-                <span>Messages</span>
-              </.link>
-            </li>
-            <li>
-              <.link
-                navigate={~p"/wallet"}
-                class="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-base-content hover:bg-base-200 hover:text-base-content"
-              >
-                <.icon name="hero-wallet" class="w-5 h-5" />
-                <span>Wallet</span>
-              </.link>
-            </li>
+<!-- Channel filter — client-side, filters the channel links below -->
+      <div class="px-4 pt-4">
+        <label for="rail-filter" class="sr-only">Filter channels and dockets</label>
+        <input
+          id="rail-filter"
+          type="search"
+          placeholder="Filter channels, dockets…"
+          autocomplete="off"
+          phx-hook=".RailFilter"
+          class="w-full rounded-md border border-slate-700 bg-slate-800/80 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-emerald-500"
+        />
+      </div>
+
+      <%= if assigns[:current_user] do %>
+        <nav class="flex-1 overflow-y-auto px-2 py-4 space-y-6" aria-label="Workspace">
+          <section>
+            <h2 class="rail-section px-2 pb-1.5">Channels</h2>
+            <ul id="rail-channel-list" class="space-y-0.5">
+              <li :for={room <- assigns[:sidebar_rooms] || []} data-rail-channel={room.slug}>
+                <.link
+                  navigate={~p"/rooms/#{room.slug}"}
+                  class={[
+                    "flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-sm text-slate-200 hover:bg-slate-800",
+                    assigns[:active_room_slug] == room.slug && "bg-emerald-600/90 text-white"
+                  ]}
+                >
+                  <span class="truncate">
+                    <span class="text-slate-500 mr-1.5">#</span>{room.slug}
+                  </span>
+                  <span
+                    :if={room.type != "public"}
+                    class="badge badge-ghost badge-xs badge-outline text-slate-300 border-slate-600"
+                  >
+                    {room.type}
+                  </span>
+                </.link>
+              </li>
+              <li :if={assigns[:sidebar_rooms] == []}>
+                <a
+                  href={~p"/rooms"}
+                  class="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-200 hover:bg-slate-800"
+                >
+                  <span class="text-slate-500">#</span> Browse the room directory
+                </a>
+              </li>
+            </ul>
+          </section>
+
+          <section>
+            <h2 class="rail-section px-2 pb-1.5">Operations</h2>
+            <ul class="space-y-0.5">
+              <li>
+                <.link
+                  navigate={~p"/messages"}
+                  class="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-200 hover:bg-slate-800"
+                >
+                  <.icon name="hero-envelope" class="size-4 text-slate-500" /> Direct messages
+                </.link>
+              </li>
+              <li>
+                <.link
+                  navigate={~p"/radio"}
+                  class="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-200 hover:bg-slate-800"
+                >
+                  <.icon name="hero-radio" class="size-4 text-slate-500" /> Radio stations
+                </.link>
+              </li>
+            </ul>
+          </section>
+
+          <section>
+            <h2 class="rail-section px-2 pb-1.5">Revenue & verification</h2>
+            <ul class="space-y-0.5">
+              <li>
+                <.link
+                  navigate={~p"/wallet"}
+                  class="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-sm text-slate-200 hover:bg-slate-800"
+                >
+                  <span class="flex items-center gap-2">
+                    <.icon name="hero-banknotes" class="size-4 text-slate-500" /> County wallet
+                  </span>
+                  <span class="badge badge-xs badge-outline border-slate-600 text-slate-300">
+                    KES
+                  </span>
+                </.link>
+              </li>
+            </ul>
+          </section>
+
+          <%= if BeamChat.Authorization.can?(assigns[:current_scope], :room_create) do %>
+            <section>
+              <h2 class="rail-section px-2 pb-1.5">Console</h2>
+              <ul class="space-y-0.5">
+                <li>
+                  <.link
+                    navigate={~p"/admin/rooms"}
+                    class="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-200 hover:bg-slate-800"
+                  >
+                    <.icon name="hero-squares-plus" class="size-4 text-slate-500" /> Rooms console
+                  </.link>
+                </li>
+                <li>
+                  <.link
+                    navigate={~p"/admin/members"}
+                    class="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-200 hover:bg-slate-800"
+                  >
+                    <.icon name="hero-users" class="size-4 text-slate-500" /> Members
+                  </.link>
+                </li>
+                <li>
+                  <.link
+                    navigate={~p"/admin/radio"}
+                    class="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-200 hover:bg-slate-800"
+                  >
+                    <.icon name="hero-signal" class="size-4 text-slate-500" /> Radio admin
+                  </.link>
+                </li>
+              </ul>
+            </section>
           <% end %>
-        </ul>
-      </nav>
-      
-<!-- User Menu / Auth -->
-      <div class="border-t border-base-300 p-3">
-        <%= if assigns[:current_user] do %>
-          <div class="flex items-center gap-3 mb-2">
-            <div class="w-8 h-8 rounded-full bg-base-200 flex items-center justify-center">
-              <span class="text-xs text-base-content">
-                {String.slice(assigns[:current_user].username || "U", 0, 1)}
-              </span>
+        </nav>
+        
+<!-- Session -->
+        <div class="border-t border-slate-800 p-4 space-y-3">
+          <div class="flex items-center gap-3">
+            <div class="size-8 rounded-full bg-emerald-600/20 text-emerald-400 flex items-center justify-center text-xs font-semibold">
+              {String.first(assigns[:current_user].username || "U") |> String.upcase()}
             </div>
-            <div class="flex-1 min-w-0">
-              <p class="text-sm font-medium text-base-content truncate">
-                {assigns[:current_user].username || "User"}
+            <div class="min-w-0 flex-1">
+              <p class="text-sm font-medium text-white truncate">
+                {assigns[:current_user].full_name || assigns[:current_user].username}
+              </p>
+              <p class="text-label-sm text-slate-500 uppercase tracking-[0.08em]">
+                {assigns[:current_user].role}
               </p>
             </div>
           </div>
-          <form action={~p"/auth/logout"} method="post" class="inline">
+          <form action={~p"/auth/logout"} method="post">
             <input type="hidden" name="_csrf_token" value={get_csrf_token()} />
-            <button type="submit" class="btn btn-ghost btn-sm w-full">Sign out</button>
+            <button
+              type="submit"
+              class="btn btn-ghost btn-sm btn-sm w-full text-slate-300 hover:text-white"
+            >
+              Sign out
+            </button>
           </form>
-        <% else %>
-          <div class="flex flex-col gap-2">
-            <a href={~p"/auth/login"} class="btn btn-ghost btn-sm w-full">Sign in</a>
-            <a href={~p"/auth/register"} class="btn btn-primary btn-sm w-full">Create account</a>
-          </div>
-        <% end %>
-      </div>
+          <Layouts.theme_toggle />
+        </div>
+      <% else %>
+        <nav class="flex-1 px-2 py-4" aria-label="Public">
+          <a
+            href={~p"/"}
+            class="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-200 hover:bg-slate-800"
+          >
+            <.icon name="hero-home" class="size-4 text-slate-500" /> Home
+          </a>
+        </nav>
+        <div class="border-t border-slate-800 p-4 space-y-2">
+          <a href={~p"/auth/login"} class="btn btn-ghost btn-sm w-full">Sign in</a>
+          <a href={~p"/auth/register"} class="btn btn-primary btn-sm w-full">Create account</a>
+          <Layouts.theme_toggle />
+        </div>
+      <% end %>
       
-<!-- Theme Toggle -->
-      <div class="border-t border-base-300 p-3">
-        <Layouts.theme_toggle />
+<!-- Mesh status footer -->
+      <div class="border-t border-slate-800 px-4 py-3 text-xs text-slate-400">
+        <div class="flex items-center gap-2">
+          <span class="size-2 rounded-full bg-emerald-500" />
+          <span class="text-slate-300">Node — operational</span>
+          <.link href={~p"/health"} class="ml-auto text-slate-500 hover:text-slate-300">
+            health
+          </.link>
+        </div>
+        <p class="mt-1 text-slate-600">BeamChat engine v{beamchat_version()}</p>
       </div>
-    </div>
-  </aside>
-  
-<!-- Main Content -->
-  <main id="main-content" class="flex-1 w-full outline-none" tabindex="-1">
-    <div class="mx-auto w-full max-w-6xl px-4 sm:px-6 lg:px-8 py-8 sm:py-10">
-      {@inner_content}
-    </div>
-  </main>
+    </aside>
+    
+<!-- Workspace column -->
+    <div class="flex min-w-0 flex-1 flex-col">
+      <!-- Top bar -->
+      <header class="sticky top-0 z-40 flex h-16 shrink-0 items-center gap-3 border-b border-slate-200 bg-white/90 px-4 backdrop-blur sm:px-6">
+        <!-- Workspace tabs -->
+        <nav class="flex items-center gap-1 overflow-x-auto pr-2" aria-label="Workspace views">
+          <.topbar_tab
+            active_tab={assigns[:active_tab]}
+            tab={:rooms}
+            label="Rooms & Hierarchy"
+            to={~p"/rooms"}
+          />
+          <.topbar_tab
+            :if={assigns[:current_user]}
+            active_tab={assigns[:active_tab]}
+            tab={:messages}
+            label="Direct Messages"
+            to={~p"/messages"}
+          />
+          <.topbar_tab
+            :if={assigns[:current_user]}
+            active_tab={assigns[:active_tab]}
+            tab={:wallet}
+            label="County Wallet"
+            to={~p"/wallet"}
+          />
+          <.topbar_tab
+            :if={BeamChat.Authorization.can?(assigns[:current_scope], :room_create)}
+            active_tab={assigns[:active_tab]}
+            tab={:admin}
+            label="Admin Console"
+            to={~p"/admin/rooms"}
+          />
+        </nav>
 
-  <footer class="border-t border-base-300/80 py-6 px-4 sm:px-6 lg:px-8 mt-auto">
-    <div class="mx-auto max-w-6xl flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between text-sm text-base-content/60">
-      <p>© {Date.utc_today().year} Beam Chat</p>
-
-      <p class="text-xs sm:text-sm">Built with Phoenix &amp; LiveView</p>
+        <div class="ml-auto flex items-center gap-2">
+          <%= if assigns[:current_user] do %>
+            <span class="civic-chip" data-state="on">
+              <span class="size-1.5 rounded-full bg-emerald-500" /> Connected · LiveView
+            </span>
+            <span :if={assigns[:livekit_on_air]} class="civic-chip" data-state="on">
+              <.icon name="hero-microphone" class="size-3.5" /> LiveKit On-Air
+            </span>
+            <button
+              type="button"
+              class="civic-chip px-2 font-mono text-slate-500"
+              phx-click={JS.focus(to: "#rail-filter")}
+              aria-label="Focus channel filter"
+            >
+              <.icon name="hero-magnifying-glass" class="size-3.5" /> ⌘K
+            </button>
+          <% end %>
+        </div>
+      </header>
+      
+<!-- Main canvas -->
+      <main id="main-content" class="flex-1 min-w-0 outline-none" tabindex="-1">
+        <div class="mx-auto w-full max-w-[1400px] p-4 sm:p-6 lg:p-8">
+          {@inner_content}
+        </div>
+      </main>
     </div>
-  </footer>
+  </div>
 
   <Layouts.flash_group flash={@flash} />
 </div>
+
+<script :type={Phoenix.LiveView.ColocatedHook} name=".RailFilter">
+  export default {
+    mounted() {
+      this.el.addEventListener("input", () => this.apply())
+    },
+    apply() {
+      const q = this.el.value.trim().toLowerCase()
+      document.querySelectorAll("[data-rail-channel]").forEach((el) => {
+        const key = el.getAttribute("data-rail-channel").toLowerCase()
+        el.style.display = key.includes(q) ? "" : "none"
+      })
+    },
+  }
+</script>

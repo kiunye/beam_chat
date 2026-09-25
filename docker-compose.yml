@@ -20,7 +20,7 @@ services:
     volumes:
       - beam_chat_pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d beam_chat_dev"]
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d beam_chat_dev" ]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -30,20 +30,20 @@ services:
     ports:
       - "6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 3s
       retries: 5
 
   livekit:
-    image: livekit/livekit-server:v1.13.5   # pinned to match docker-compose.swarm.yml (current stable, 2026-07-31)
+    image: livekit/livekit-server:v1.13.5 # pinned to match docker-compose.swarm.yml (current stable, 2026-07-31)
     command: --config /etc/livekit.yaml --bind 0.0.0.0
     volumes:
       - ./docker/livekit.yaml:/etc/livekit.yaml:ro
     ports:
-      - "7880:7880"   # HTTP/WS signaling (also server API / webhooks config)
-      - "7881:7881"   # ICE/TCP
-      - "50100-50200:50100-50200/udp"  # ICE/UDP (media)
+      - "7880:7880" # HTTP/WS signaling (also server API / webhooks config)
+      - "7881:7881" # ICE/TCP
+      - "50100-50200:50100-50200/udp" # ICE/UDP (media)
     depends_on:
       redis:
         condition: service_healthy
