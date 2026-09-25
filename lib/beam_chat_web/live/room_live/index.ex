@@ -110,6 +110,14 @@ defmodule BeamChatWeb.RoomLive.Index do
           <.link navigate={~p"/messages"} class="civic-chip" id="nav-direct-messages">
             Direct messages
           </.link>
+          <.link
+            :if={BeamChat.Authorization.can?(assigns[:current_scope], :room_create)}
+            navigate={~p"/admin/rooms"}
+            class="btn btn-primary btn-sm rounded-md gap-2"
+            id="nav-create-room"
+          >
+            <.icon name="hero-plus" class="size-4" /> Create room
+          </.link>
         </div>
       </div>
       
