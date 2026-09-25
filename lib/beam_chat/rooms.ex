@@ -104,6 +104,19 @@ defmodule BeamChat.Rooms do
   end
 
   @doc """
+  List categories belonging to `tenant_id` — the tenant-filtered variant used
+  by the admin console. Identical behaviour otherwise, but driving the RLS
+  GUC so the caller need not already be scoped.
+  """
+  @spec list_categories_for(Ecto.UUID.t()) :: [RoomCategory.t()]
+  def list_categories_for(tenant_id) do
+    Repo.with_tenant(tenant_id, tenant_id, fn ->
+      from(c in RoomCategory, where: c.tenant_id == ^tenant_id, order_by: [asc: c.name])
+      |> Repo.all()
+    end)
+  end
+
+  @doc """
   Lists non-archived rooms visible to the user on the index (excludes secret rooms
   unless the user is the owner or a member).
 
