@@ -44,6 +44,27 @@ defmodule BeamChat.Wallet do
   end
 
   @doc """
+  The user's current active paid-room subscriptions, newest first, joined
+  with their rooms — the county wallet's "Active Gated Rooms" panel.
+
+  Only subscriptions in the user's tenant GUC scope are returned (the
+  RLS policy requires it anyway when called from a request process).
+  """
+  @spec list_active_subscriptions(String.t()) :: [GroupSubscription.t()]
+  def list_active_subscriptions(user_id) when is_binary(user_id) do
+    now = DateTime.utc_now(:second)
+
+    Repo.scoped(fn ->
+      from(s in GroupSubscription,
+        where: s.user_id == ^user_id and s.status == "active" and s.expires_at > ^now,
+        order_by: [asc: s.expires_at],
+        preload: [:room]
+      )
+      |> Repo.all()
+    end)
+  end
+
+  @doc """
   Paginated wallet transactions, newest first with a stable `id` tie-break
   (SECURITY_REVIEW.md P3 #23).
 
