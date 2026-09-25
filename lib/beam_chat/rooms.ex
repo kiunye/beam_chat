@@ -121,11 +121,12 @@ defmodule BeamChat.Rooms do
         |> filtered_rooms_base_query()
         |> maybe_filter_search(opts[:search])
         |> maybe_filter_category(normalize_category_id(opts[:category_id]))
+        |> maybe_filter_type(opts[:type])
 
       rooms =
         from(r in base,
           order_by: [asc: r.name],
-          preload: [:category, :owner],
+          preload: [:category, :owner, :parent, :tenant],
           limit: ^limit,
           offset: ^offset
         )
@@ -138,7 +139,8 @@ defmodule BeamChat.Rooms do
         total_count: total,
         page: page,
         limit: limit,
-        page_count: Pagination.page_count(total, limit)
+        page_count: Pagination.page_count(total, limit),
+        member_counts: member_counts(rooms)
       }
     end)
   end
@@ -183,11 +185,54 @@ defmodule BeamChat.Rooms do
     from r in q, where: r.category_id == ^category_id
   end
 
+  defp maybe_filter_type(q, nil), do: q
+  defp maybe_filter_type(q, ""), do: q
+
+  defp maybe_filter_type(q, type) do
+    from r in q, where: r.type == ^type
+  end
+
+  # Member counts per listed room, batched into one query — feeding the
+  # directory card grid ("N members" chips) without an N+1.
+  defp member_counts([]), do: %{}
+
+  defp member_counts(rooms) do
+    ids = Enum.map(rooms, & &1.id)
+
+    from(rm in RoomMember,
+      where: rm.room_id in ^ids,
+      group_by: rm.room_id,
+      select: {rm.room_id, count(rm.id)}
+    )
+    |> Repo.all()
+    |> Map.new()
+  end
+
+  @doc """
+  Room totals grouped by visibility type (`public`, `private`, `secret`,
+  `paid`) for the directory's tab chips — one grouped query, same
+  visibility filter as `list_rooms_for_index/2`.
+  """
+  @spec count_rooms_by_type(BeamChat.Accounts.User.t()) :: %{
+          String.t() => non_neg_integer()
+        }
+  def count_rooms_by_type(user) do
+    Repo.scoped(fn ->
+      user
+      |> filtered_rooms_base_query()
+      |> then(fn base ->
+        from(r in base, group_by: r.type, select: {r.type, count(r.id)})
+      end)
+      |> Repo.all()
+      |> Map.new()
+    end)
+  end
+
   def get_room_by_slug!(slug) do
     Repo.scoped(fn ->
       from(r in Room,
         where: r.slug == ^slug and r.is_archived == false,
-        preload: [:category, :owner]
+        preload: [:category, :owner, :parent, :tenant]
       )
       |> Repo.one!()
     end)
@@ -197,7 +242,7 @@ defmodule BeamChat.Rooms do
     Repo.scoped(fn ->
       from(r in Room,
         where: r.slug == ^slug and r.is_archived == false,
-        preload: [:category, :owner]
+        preload: [:category, :owner, :parent, :tenant]
       )
       |> Repo.one()
     end)
@@ -327,6 +372,14 @@ defmodule BeamChat.Rooms do
 
       from(r in base, order_by: [asc: r.name])
       |> Repo.all()
+    end)
+  end
+
+  @doc "Member count for a room (one row, RLS-scoped like the rest of the read API)."
+  @spec room_member_count(Ecto.UUID.t()) :: non_neg_integer()
+  def room_member_count(room_id) do
+    Repo.scoped(fn ->
+      from(rm in RoomMember, where: rm.room_id == ^room_id, select: count(rm.id)) |> Repo.one()
     end)
   end
 
