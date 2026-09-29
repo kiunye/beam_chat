@@ -106,10 +106,6 @@ config :phoenix_live_view,
 # Disable swoosh api client as it is only required for production adapters.
 config :swoosh, :api_client, false
 
-# Staff wallet test credits + webhook tunnel URLs (see scripts/webhook-dev.sh)
+# Staff wallet test credits (dev-only escape hatch; the boot-time
+# :dev_wallet_credit_build gate keeps this false outside dev).
 config :beam_chat, :allow_dev_wallet_credit, true
-
-# Dev-only CSP allowlist for the Figma MCP design-capture script. Must NOT be
-# set in prod.exs — leaks `https://mcp.figma.com` into the prod surface,
-# widening the XSS attack surface. See SECURITY_REVIEW.md P1 #6.
-config :beam_chat, :csp_dev_extras, true

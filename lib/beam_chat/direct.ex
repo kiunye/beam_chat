@@ -2,40 +2,36 @@ defmodule BeamChat.Direct do
   @moduledoc """
   Direct conversations and messages (1:1).
 
-  ## Security — UUID-entropy assumption (SECURITY_REVIEW.md P1 #11)
+  A conversation is identified by the ordered pair of its two
+  participants, so the same two users always land in the same
+  conversation regardless of who started it, and a user cannot open a
+  conversation with themselves (PRD §2.5). Sends follow the same single
+  pipeline as room messages: fresh ban check, participant check, content
+  validation, moderation with same-operation logging, synchronous
+  persist, broadcast.
+
+  ## Security — UUID-entropy assumption
 
   The DM topic key is the conversation UUID (`conversation:<uuid>`).
   Anyone who knows the UUID of a conversation they are not a participant
   of can subscribe to that PubSub topic and receive the message stream.
-
-  `ChatLive.Private.assign_thread/2` enforces `Direct.participant?/2` at
-  mount time, so the application surface is safe — but the underlying
-  PubSub topic is not access-controlled.
-
-  We rely on the **unguessability of conversation UUIDs** (UUIDv4 —
-  122 bits of entropy) as the security boundary for this. Operators and
-  contributors must:
-
-    - Not weaken the UUID shape (do not switch to sequential or otherwise
-      enumerable identifiers).
-    - Not log conversation UUIDs at INFO level or higher.
-    - Not include conversation UUIDs in URLs that are sent off-platform
-      (e.g. email notifications) without an additional auth check.
-
-  Defence in depth: per-user rate limiting on `/messages/:id` is enforced
-  by `BeamChatWeb.ChatLive.Private.handle_show/2` to bound enumeration
-  attempts.
+  `ChatLive.Private` enforces `Direct.participant?/2` at mount time, so
+  the application surface is safe — but the underlying PubSub topic is
+  not access-controlled. We rely on the unguessability of UUIDv4
+  conversation ids as the boundary, and per-user rate limiting on
+  `/messages/:id` bounds enumeration attempts.
   """
 
   import Ecto.Query
 
+  alias BeamChat.Accounts
   alias BeamChat.Accounts.User
   alias BeamChat.Direct.Conversation
   alias BeamChat.Direct.DirectMessage
-  alias BeamChat.Messages.Persister
+  alias BeamChat.Messages.Pipeline
   alias BeamChat.Messages.Validator
-  alias BeamChat.Moderation.RuleEngine
   alias BeamChat.Pagination
+  alias BeamChat.PubSub
   alias BeamChat.Repo
 
   @topic_prefix "conversation:"
@@ -43,30 +39,24 @@ defmodule BeamChat.Direct do
   def topic(conversation_id), do: @topic_prefix <> conversation_id
 
   def subscribe(conversation_id) do
-    Phoenix.PubSub.subscribe(BeamChat.PubSub, topic(conversation_id))
+    Phoenix.PubSub.subscribe(PubSub, topic(conversation_id))
   end
 
   def unsubscribe(conversation_id) do
-    Phoenix.PubSub.unsubscribe(BeamChat.PubSub, topic(conversation_id))
+    Phoenix.PubSub.unsubscribe(PubSub, topic(conversation_id))
   end
 
   @spec broadcast_new_message(DirectMessage.t()) :: :ok
   def broadcast_new_message(%DirectMessage{} = msg) do
-    Phoenix.PubSub.broadcast(
-      BeamChat.PubSub,
-      topic(msg.conversation_id),
-      {:new_direct_message, msg}
-    )
+    Phoenix.PubSub.broadcast(PubSub, topic(msg.conversation_id), {:new_direct_message, msg})
+    :ok
   end
 
   @doc """
-  Lists conversations for a user with the other participant and last message loaded.
-
-  Uses a constant number of queries (conversations, batch users, batch last messages)
-  instead of N+1 per conversation.
-
-  Returns a map with `:rows`, `:total_count`, `:page`, `:limit`, and `:page_count` for
-  server-side pagination (same shape as `BeamChat.Rooms.list_rooms_for_index/2`).
+  Lists conversations for a user with the other participant and last
+  message loaded. Uses a constant number of queries (conversations, batch
+  users, batch last messages) instead of N+1 per conversation. Returns a
+  map with `:rows`, `:total_count`, `:page`, `:limit`, and `:page_count`.
   """
   def list_conversations_for(%User{id: user_id}, opts \\ %{}) do
     limit = Pagination.normalize_limit(Map.get(opts, :limit), 30)
@@ -142,9 +132,7 @@ defmodule BeamChat.Direct do
     |> Map.new(&{&1.conversation_id, &1})
   end
 
-  def get_conversation!(id) do
-    Repo.get!(Conversation, id)
-  end
+  def get_conversation!(id), do: Repo.get!(Conversation, id)
 
   def get_conversation(id) do
     case Ecto.UUID.cast(id) do
@@ -154,9 +142,15 @@ defmodule BeamChat.Direct do
   end
 
   def participant?(%Conversation{} = c, user_id) do
-    user_id in [c.user_low_id, c.user_high_id]
+    is_binary(user_id) and user_id in [c.user_low_id, c.user_high_id]
   end
 
+  @doc """
+  Gets (or creates) the one conversation for this pair. The ordered-pair
+  normalization makes (A,B) and (B,A) resolve to the same row; the unique
+  index is the hard guarantee, so a concurrent insert race is retried
+  rather than raised.
+  """
   def get_or_create_conversation!(%User{id: a}, %User{id: b}) when a != b do
     {low, high} = Conversation.ordered_pair(a, b)
 
@@ -165,75 +159,132 @@ defmodule BeamChat.Direct do
         c
 
       nil ->
-        {:ok, c} =
-          %Conversation{}
-          |> Conversation.changeset(%{user_low_id: low, user_high_id: high})
-          |> Repo.insert()
-
-        c
+        insert_conversation!(low, high)
     end
   end
 
-  def list_messages(conversation_id, limit \\ 200) do
+  defp insert_conversation!(low, high) do
+    %Conversation{}
+    |> Conversation.changeset(%{user_low_id: low, user_high_id: high})
+    |> Repo.insert()
+    |> case do
+      {:ok, c} ->
+        c
+
+      {:error, %Ecto.Changeset{errors: errors}} ->
+        retry_conversation_insert!(errors, low, high)
+    end
+  end
+
+  # A concurrent insert race is retried rather than raised; any other
+  # changeset error is not recoverable here.
+  defp retry_conversation_insert!(errors, low, high) do
+    if unique_pair_violation?(errors) do
+      Repo.get_by!(Conversation, user_low_id: low, user_high_id: high)
+    else
+      raise Ecto.InvalidChangesetError, action: :insert, changeset: %{errors: errors}
+    end
+  end
+
+  defp unique_pair_violation?(errors) do
+    Enum.any?(errors, fn
+      {:user_low_id, {_, [constraint: :unique, constraint_name: _]}} -> true
+      _ -> false
+    end)
+  end
+
+  @doc """
+  The conversation's most recent messages, returned oldest-first for
+  display-order streaming.
+  """
+  def list_messages(conversation_id, limit \\ 200) when is_integer(limit) and limit > 0 do
     from(m in DirectMessage,
       where: m.conversation_id == ^conversation_id and m.is_deleted == false,
-      order_by: [asc: m.inserted_at],
+      order_by: [desc: m.inserted_at, desc: m.id],
       limit: ^limit,
       preload: [:sender]
     )
     |> Repo.all()
+    |> Enum.reverse()
   end
 
   @doc """
-  Validates, moderates, persists and broadcasts a direct message synchronously.
+  Marks every message from the other participant as read (batch update).
+  """
+  def mark_conversation_read(%Conversation{} = conversation, user_id) do
+    other_id = other_participant_id(conversation, user_id)
 
-  Returns `{:ok, %DirectMessage{}}` (already broadcast on
-  `Direct.topic(conversation_id)`) or `{:error, reason}` where `reason` is
-  `:empty_content`, `{:blocked, reason}` (moderation rejection), a validator
-  error atom, or `{:persist_failed, reason}`.
+    from(m in DirectMessage,
+      where:
+        m.conversation_id == ^conversation.id and m.sender_id == ^other_id and
+          m.is_read == false and m.is_deleted == false
+    )
+    |> Repo.update_all(set: [is_read: true])
+  end
+
+  @doc "How many unread DMs the user has across all conversations."
+  @spec unread_count(Ecto.UUID.t()) :: non_neg_integer()
+  def unread_count(user_id) do
+    from(m in DirectMessage,
+      join: c in Conversation,
+      on: c.id == m.conversation_id,
+      where:
+        m.is_read == false and m.is_deleted == false and m.sender_id != ^user_id and
+          (c.user_low_id == ^user_id or c.user_high_id == ^user_id),
+      select: count(m.id)
+    )
+    |> Repo.one()
+  end
+
+  @doc """
+  Sends a DM along the single send path: fresh ban check on the sender,
+  participant check, content validation, moderation (with same-operation
+  logging), synchronous persist, broadcast. A blocked message is rejected
+  with the reason shown to the sender; a flagged message is stored but
+  marked for review.
   """
   @spec send_message(Ecto.UUID.t(), Ecto.UUID.t(), String.t()) ::
           {:ok, DirectMessage.t()} | {:error, term()}
   def send_message(conversation_id, sender_id, content)
-      when is_binary(conversation_id) and is_binary(sender_id) do
-    trimmed = String.trim(content || "")
+      when is_binary(conversation_id) and is_binary(sender_id) and is_binary(content) do
+    trimmed = String.trim(content)
 
-    if trimmed == "" do
-      {:error, :empty_content}
-    else
-      message = %{
-        kind: :direct,
-        conversation_id: conversation_id,
-        user_id: sender_id,
-        content: trimmed,
-        inserted_at: nil
-      }
-
-      dispatch_after_moderation(message)
+    with {:ok, sender} <- fetch_active_sender(sender_id),
+         {:ok, conversation} <- fetch_conversation(conversation_id),
+         :ok <- ensure_participant(conversation, sender.id),
+         {:ok, validated} <-
+           Validator.validate(%{
+             kind: :direct,
+             conversation_id: conversation.id,
+             user_id: sender.id,
+             content: trimmed
+           }),
+         {:ok, %DirectMessage{} = row} <- Pipeline.run(validated) do
+      broadcast_new_message(row)
+      {:ok, row}
     end
   end
 
-  defp dispatch_after_moderation(data) do
-    with {:ok, validated} <- Validator.validate(data) do
-      case RuleEngine.apply_rules(validated) do
-        {:blocked, _msg, reason} -> {:error, {:blocked, reason}}
-        {:flagged, msg, _reason} -> persist_and_broadcast(msg)
-        msg when is_map(msg) -> persist_and_broadcast(msg)
-      end
+  defp ensure_participant(conversation, sender_id) do
+    if participant?(conversation, sender_id),
+      do: :ok,
+      else: {:error, :not_participant}
+  end
+
+  defp fetch_conversation(conversation_id) do
+    case get_conversation(conversation_id) do
+      %Conversation{} = conversation -> {:ok, conversation}
+      nil -> {:error, :not_found}
     end
   end
 
-  defp persist_and_broadcast(msg) do
-    case Persister.persist_and_preload(msg) do
-      {:ok, %DirectMessage{} = row} ->
-        broadcast_new_message(row)
-        {:ok, row}
-
-      {:error, _reason} = err ->
-        err
-
-      {:ok, other} ->
-        {:error, {:persist_failed, {:unexpected_row, other}}}
+  # Fresh, per-send database check (PRD §2.2) — a session that outlives a
+  # ban must never keep write privileges.
+  defp fetch_active_sender(sender_id) do
+    case Accounts.get_user(sender_id) do
+      %User{is_banned: true} -> {:error, :banned}
+      %User{} = user -> {:ok, user}
+      nil -> {:error, :unknown_sender}
     end
   end
 end

@@ -1,7 +1,7 @@
 defmodule BeamChat.Streaming.RadioStation do
   @moduledoc """
-  A tenant-scoped radio station: an external audio source published into a
-  LiveKit room via the LiveKit Ingress service.
+  A radio station: an external audio source published into a LiveKit room
+  via the LiveKit Ingress service (the radio feature carried into v2).
 
   * `source_type` — how the audio reaches LiveKit Ingress:
       * `"url"`   — Ingress pulls an HLS/SRT/file URL directly
@@ -42,24 +42,18 @@ defmodule BeamChat.Streaming.RadioStation do
     field :ingress_id, :string
     field :metadata, :map, default: %{}
 
-    belongs_to :tenant, BeamChat.Tenants.Tenant, foreign_key: :tenant_id
-    belongs_to :room, BeamChat.Rooms.Room, foreign_key: :room_id
-
     timestamps(type: :utc_datetime)
   end
 
   @type t :: %__MODULE__{}
 
   @doc """
-  Creation changeset. `tenant_id` is set by the context when building the
-  struct (never cast from params), and the station always starts inactive
-  and offline.
+  Creation changeset. The station always starts inactive and offline.
   """
   def create_changeset(station, attrs) do
     station
     |> cast(attrs, [:name, :slug, :description, :source_type, :source_url, :is_active])
     |> common_validations()
-    |> validate_required([:tenant_id])
   end
 
   @doc """
@@ -86,8 +80,6 @@ defmodule BeamChat.Streaming.RadioStation do
       message: "must contain only lowercase letters, numbers, and hyphens"
     )
     |> validate_required_source_url()
-    |> foreign_key_constraint(:tenant_id)
-    |> foreign_key_constraint(:room_id)
   end
 
   # A pull source is meaningless without its URL; push sources

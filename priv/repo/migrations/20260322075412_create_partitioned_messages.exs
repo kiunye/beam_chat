@@ -18,7 +18,7 @@ defmodule BeamChat.Repo.Migrations.CreatePartitionedMessages do
     ) PARTITION BY RANGE (inserted_at);
     """
 
-    for year <- 2025..2027, month <- 1..12 do
+    for year <- 2025..2028, month <- 1..12 do
       from_date = Date.new!(year, month, 1)
 
       to_date =

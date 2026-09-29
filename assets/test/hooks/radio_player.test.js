@@ -1,10 +1,12 @@
 // Smoke tests for the RadioPlayer Phoenix LiveView hook.
 // Uses jsdom to provide a DOM, then asserts that the hook:
-//   1. Registers the phx:radio_connect / phx:radio_disconnect listeners
+//   1. Registers radio_connect / radio_disconnect server-event handlers
+//      via handleEvent (LiveView dispatches server push events on window;
+//      handleEvent is the sanctioned hook API)
 //   2. Ignores events aimed at a different station's room
 //   3. Connects with the token/url and pushes radio_connected
 //   4. Attaches subscribed audio tracks to an <audio> element
-//   5. Disconnects and removes the audio element on destroyed()
+//   5. Disconnects and removes the audio element on destroy
 //   6. Pushes radio_error when connect fails or the payload is incomplete
 //
 // Run with: npm test
@@ -79,12 +81,21 @@ function makeEl(dom, room) {
 
 function makeHookCtx(el, dom) {
   const pushEvents = []
+  const serverEvents = new Map()
   const ctx = {
     el,
     pushEvent: (name, payload) => {
       pushEvents.push({ name, payload })
       return Promise.resolve({})
     },
+    handleEvent: (name, cb) => {
+      serverEvents.set(name, cb)
+    },
+    triggerEvent: (name, payload) => {
+      const cb = serverEvents.get(name)
+      if (cb) cb(payload)
+    },
+    registeredEvents: serverEvents,
     pushEvents,
     dom
   }
@@ -100,13 +111,13 @@ function installHookMethods(ctx, Hook) {
   return ctx
 }
 
-function dispatch(dom, el, eventName, detail) {
-  el.dispatchEvent(new dom.window.CustomEvent(eventName, { detail }))
+function settle() {
+  return new Promise((resolve) => setTimeout(resolve, 0))
 }
 
 // --- Tests -----------------------------------------------------------------
 
-test("hook registers phx:radio_connect and phx:radio_disconnect listeners", () => {
+test("hook registers radio_connect and radio_disconnect via handleEvent", () => {
   const dom = new JSDOM("<!doctype html><html><body><div id=hook></div></body></html>")
   const el = dom.window.document.getElementById("hook")
   el.setAttribute("data-room", "radio-horn-fm")
@@ -119,12 +130,11 @@ test("hook registers phx:radio_connect and phx:radio_disconnect listeners", () =
   const ctx = installHookMethods(makeHookCtx(el, dom), Hook)
   Hook.mounted.call(ctx)
 
-  assert.ok(ctx.handleConnect, "expected handleConnect to be defined")
-  assert.ok(ctx.handleDisconnect, "expected handleDisconnect to be defined")
+  assert.ok(ctx.registeredEvents.has("radio_connect"), "expected a radio_connect handler")
+  assert.ok(ctx.registeredEvents.has("radio_disconnect"), "expected a radio_disconnect handler")
 
-  // Dispatching connect for another room must not call connect (no Room
-  // constructor available — it would throw and fail the test).
-  dispatch(dom, el, "phx:radio_connect", { room: "radio-elsewhere", token: "abc", url: "wss://x" })
+  // A connect for another station's room must not touch this hook.
+  ctx.triggerEvent("radio_connect", { room: "radio-elsewhere", token: "abc", url: "wss://x" })
   assert.equal(ctx.pushEvents.length, 0, "no push events expected for a foreign room")
 })
 
@@ -143,14 +153,13 @@ test("connects and pushes radio_connected for a matching room", async () => {
   const ctx = installHookMethods(makeHookCtx(el, dom), Hook)
   Hook.mounted.call(ctx)
 
-  dispatch(dom, el, "phx:radio_connect", {
+  ctx.triggerEvent("radio_connect", {
     room: "radio-horn-fm",
     token: "tok",
     url: "wss://test.livekit.local"
   })
 
-  // The hook's connect is async; let microtasks settle.
-  await new Promise((resolve) => setTimeout(resolve, 0))
+  await settle()
 
   assert.deepEqual(room.connectCalls, [{ url: "wss://test.livekit.local", token: "tok" }])
   assert.ok(
@@ -182,8 +191,8 @@ test("attaches subscribed audio tracks to an audio element", async () => {
   const ctx = installHookMethods(makeHookCtx(el, dom), Hook)
   Hook.mounted.call(ctx)
 
-  dispatch(dom, el, "phx:radio_connect", { room: "radio-horn-fm", token: "tok", url: "wss://x" })
-  await new Promise((resolve) => setTimeout(resolve, 0))
+  ctx.triggerEvent("radio_connect", { room: "radio-horn-fm", token: "tok", url: "wss://x" })
+  await settle()
 
   room.fire("trackSubscribed", track)
 
@@ -207,13 +216,13 @@ test("disconnect removes the room and the audio element", async () => {
   const ctx = installHookMethods(makeHookCtx(el, dom), Hook)
   Hook.mounted.call(ctx)
 
-  dispatch(dom, el, "phx:radio_connect", { room: "radio-horn-fm", token: "tok", url: "wss://x" })
-  await new Promise((resolve) => setTimeout(resolve, 0))
+  ctx.triggerEvent("radio_connect", { room: "radio-horn-fm", token: "tok", url: "wss://x" })
+  await settle()
 
   assert.ok(ctx.room, "expected a live room after connect")
 
-  dispatch(dom, el, "phx:radio_disconnect", { room: "radio-horn-fm" })
-  await new Promise((resolve) => setTimeout(resolve, 0))
+  ctx.triggerEvent("radio_disconnect", { room: "radio-horn-fm" })
+  await settle()
 
   assert.equal(room.disconnectCalls, 1, "expected room.disconnect to be called")
   assert.equal(ctx.room, null, "expected the room reference to be cleared")
@@ -234,8 +243,8 @@ test("pushes radio_error when connect fails", async () => {
   const ctx = installHookMethods(makeHookCtx(el, dom), Hook)
   Hook.mounted.call(ctx)
 
-  dispatch(dom, el, "phx:radio_connect", { room: "radio-horn-fm", token: "tok", url: "wss://x" })
-  await new Promise((resolve) => setTimeout(resolve, 0))
+  ctx.triggerEvent("radio_connect", { room: "radio-horn-fm", token: "tok", url: "wss://x" })
+  await settle()
 
   assert.ok(
     ctx.pushEvents.some((e) => e.name === "radio_error"),
@@ -257,8 +266,8 @@ test("pushes radio_error when token or url is missing", async () => {
   const ctx = installHookMethods(makeHookCtx(el, dom), Hook)
   Hook.mounted.call(ctx)
 
-  dispatch(dom, el, "phx:radio_connect", { room: "radio-horn-fm", token: "abc" })
-  await new Promise((resolve) => setTimeout(resolve, 0))
+  ctx.triggerEvent("radio_connect", { room: "radio-horn-fm", token: "abc" })
+  await settle()
 
   assert.ok(
     ctx.pushEvents.some((e) => e.name === "radio_error"),

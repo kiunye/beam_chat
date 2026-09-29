@@ -9,14 +9,13 @@ defmodule BeamChatWeb.Router do
     plug :put_layout, html: {BeamChatWeb.Layouts, :app}
     plug :protect_from_forgery
     plug BeamChatWeb.Plugs.FetchCurrentUser
-    plug BeamChatWeb.Plug.TenantContext
+    plug BeamChatWeb.Plugs.AssignScope
 
     plug :put_secure_browser_headers, %{"content-security-policy" => BeamChatWeb.csp_header()}
   end
 
   # Content Security Policy header. Defined as a public function on
-  # `BeamChatWeb` so the `plug` macro can resolve it at compile time. See
-  # SECURITY_REVIEW.md P1 #6.
+  # `BeamChatWeb` so the `plug` macro can resolve it at compile time.
 
   pipeline :api do
     plug :accepts, ["json"]
@@ -36,7 +35,7 @@ defmodule BeamChatWeb.Router do
     live_session :authenticated,
       on_mount: [
         {BeamChatWeb.UserAuthLive, :require_authenticated},
-        {BeamChatWeb.TenantContext, :default}
+        {BeamChatWeb.Plugs.AssignScope, :default}
       ],
       layout: {BeamChatWeb.Layouts, :app} do
       live "/rooms", RoomLive.Index, :index
@@ -45,30 +44,22 @@ defmodule BeamChatWeb.Router do
       live "/messages/:id", ChatLive.Private, :show
       live "/wallet", WalletLive.Index, :index
       live "/radio", RadioLive.Index, :index
-      live "/admin/rooms", RoomTreeLive, :index
     end
 
-    # Permission-gated admin surface. The on_mount hooks run in order:
-    # authenticate, resolve the tenant context (which builds
-    # `:current_scope`), then require the permission against that scope.
-    live_session :tenant_manage,
+    # The admin surface. The on_mount hooks run in order: authenticate,
+    # build the platform scope, then require the permission against that
+    # scope. Non-admin sessions are blocked outright, not just hidden
+    # (PRD §4.4, §4.5).
+    live_session :admin,
       on_mount: [
         {BeamChatWeb.UserAuthLive, :require_authenticated},
-        {BeamChatWeb.TenantContext, :default},
-        {BeamChatWeb.Authorization, {:require_permission, :tenant_manage}}
+        {BeamChatWeb.Plugs.AssignScope, :default},
+        {BeamChatWeb.Authorization, {:require_permission, :settings_access}}
       ],
       layout: {BeamChatWeb.Layouts, :app} do
-      live "/admin/members", MemberAdminLive, :index
-    end
-
-    live_session :radio_manage,
-      on_mount: [
-        {BeamChatWeb.UserAuthLive, :require_authenticated},
-        {BeamChatWeb.TenantContext, :default},
-        {BeamChatWeb.Authorization, {:require_permission, :radio_manage}}
-      ],
-      layout: {BeamChatWeb.Layouts, :app} do
-      live "/admin/radio", RadioAdminLive, :index
+      live "/admin/settings", AdminLive.Settings, :index
+      live "/admin/settings/:tab", AdminLive.Settings, :index
+      live "/admin/radio", AdminLive.Radio, :index
     end
 
     get "/payments/paystack/return", PaystackReturnController, :show
@@ -112,7 +103,8 @@ defmodule BeamChatWeb.Router do
     # The M-Pesa STK callback URL embeds a shared secret in the path:
     #   https://<host>/webhooks/mpesa/<secret>
     # The :mpesa_webhook pipeline enforces that the path secret matches
-    # `MPESA_CALLBACK_SECRET` (fail-closed in prod). See SECURITY_REVIEW.md P0 #3.
+    # the one configured in the provider's admin settings (fail-closed
+    # in prod).
     post "/mpesa/:secret", MpesaWebhookController, :create
   end
 
@@ -129,7 +121,6 @@ defmodule BeamChatWeb.Router do
     scope "/dev" do
       pipe_through :browser
 
-      get "/design-kit", BeamChatWeb.DesignKitController, :show
       live_dashboard "/dashboard", metrics: BeamChatWeb.Telemetry
       forward "/mailbox", Plug.Swoosh.MailboxPreview
     end

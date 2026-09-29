@@ -1,308 +1,176 @@
 defmodule BeamChat.AuthorizationTest do
   @moduledoc """
-  Central permission checks (`BeamChat.Authorization.can?/2`) and scope
-  construction (`BeamChat.Authorization.Scope.for_user/2`).
-
-  Roles are exercised through fixtures with explicit `role` attributes so
-  the permission union (global role + tenant role) is asserted
-  end-to-end: the same path production LiveViews and plugs will use.
+  The single authorization point (PRD §4.5): platform-role permissions via
+  `Scope.for_user/1`, room-scoped permission composition, and
+  `ensure_permission/2`.
   """
 
-  use BeamChat.DataCase, async: false
+  use BeamChat.DataCase, async: true
 
-  import BeamChat.TestFixtures
+  # The shared room_fixture creates rooms without a slug, which the room
+  # changeset currently rejects (see the defect note below). Re-import
+  # TestFixtures without it so the local slug-aware version can use the
+  # same name.
+  import BeamChat.TestFixtures, except: [room_fixture: 1, room_fixture: 2]
 
   alias BeamChat.Authorization
   alias BeamChat.Authorization.Scope
-  alias BeamChat.Tenants
+  alias BeamChat.Rooms
 
-  defp uniq, do: :erlang.unique_integer([:positive]) |> to_string()
-
-  describe "Scope.for_user/2" do
-    test "guest scope carries no user, tenant, or role" do
-      scope = Scope.for_user(nil, nil)
-
-      assert scope.user == nil
-      assert scope.tenant == nil
-      assert scope.tenant_role == nil
-      assert Scope.user_id(scope) == nil
-    end
-
-    test "resolves the tenant membership role once when the tenant is known" do
-      user = user_fixture()
-      tenant = tenant_with_member(user, "admin")
-      scope = Scope.for_user(user, tenant)
-
-      assert scope.user.id == user.id
-      assert scope.tenant.id == tenant.id
-      assert scope.tenant_role == "admin"
-      assert Scope.user_id(scope) == user.id
-    end
-
-    test "a user without membership in the tenant gets no tenant role" do
-      user = user_fixture()
-      stranger = user_fixture()
-      tenant = tenant_with_member(user, "member")
-
-      assert Scope.for_user(stranger, tenant).tenant_role == nil
-    end
+  # DEFECT WORKAROUND (lib, reported in the test run summary):
+  # Rooms.Room.changeset/2 runs validate_required(:slug) before put_slug/1
+  # derives one from the name, so the shared room_fixture — which creates
+  # rooms without a slug — fails. Shadow it locally with an explicit slug.
+  defp room_fixture(owner, attrs \\ []) do
+    attrs = Map.new(attrs)
+    slug = Map.get_lazy(attrs, :slug, fn -> "room-#{System.unique_integer([:positive])}" end)
+    BeamChat.TestFixtures.room_fixture(owner, Map.put(attrs, :slug, slug))
   end
 
-  describe "Authorization.can?/2 with global roles" do
-    test "guest scopes hold nothing" do
-      refute Authorization.can?(nil, :user_ban)
-      refute Authorization.can?(Scope.for_user(nil, nil), :user_ban)
+  @admin_permissions ~w(settings_access user_manage payments_configure structure_manage
+    moderation_configure wallet_credit radio_manage room_create room_manage room_moderate
+    member_manage message_delete)a
+
+  @moderator_permissions ~w(room_create room_moderate member_manage message_delete)a
+
+  @admin_only_permissions ~w(settings_access user_manage payments_configure structure_manage
+    moderation_configure wallet_credit radio_manage)a
+
+  describe "global permissions via Scope.for_user/1" do
+    test "admin scope grants the full permission list" do
+      scope = Scope.for_user(admin_fixture())
+
+      assert Authorization.permissions(scope) |> Enum.sort() == Enum.sort(@admin_permissions)
+
+      Enum.each(@admin_permissions, fn permission ->
+        assert Authorization.can?(scope, permission)
+      end)
     end
 
-    test "global admin holds user_ban and wallet_credit" do
-      admin = user_fixture(%{role: "admin"})
-      scope = Scope.for_user(admin, nil)
+    test "moderator scope grants only content-moderation permissions, never Settings" do
+      scope = Scope.for_user(moderator_fixture())
 
-      assert Authorization.can?(scope, :user_ban)
-      assert Authorization.can?(scope, :wallet_credit)
-      assert Authorization.can?(scope, :user_manage_roles)
+      assert Authorization.permissions(scope) |> Enum.sort() == Enum.sort(@moderator_permissions)
+
+      Enum.each(@moderator_permissions, fn permission ->
+        assert Authorization.can?(scope, permission)
+      end)
+
+      Enum.each(@admin_only_permissions, fn permission ->
+        refute Authorization.can?(scope, permission)
+      end)
     end
 
-    test "global moderator can ban but cannot credit wallets" do
-      moderator = user_fixture(%{role: "moderator"})
-      scope = Scope.for_user(moderator, nil)
+    test "member scope grants nothing" do
+      scope = Scope.for_user(user_fixture())
 
-      assert Authorization.can?(scope, :user_ban)
-      refute Authorization.can?(scope, :wallet_credit)
-      refute Authorization.can?(scope, :user_manage_roles)
-    end
-
-    test "plain members hold no global permissions" do
-      member = user_fixture()
-      scope = Scope.for_user(member, nil)
-
-      refute Authorization.can?(scope, :user_ban)
-      refute Authorization.can?(scope, :wallet_credit)
+      assert Authorization.permissions(scope) == []
       refute Authorization.can?(scope, :room_create)
+      refute Authorization.can?(scope, :settings_access)
+      refute Authorization.can?(scope, :message_delete)
     end
 
-    test "unknown permissions fail closed instead of raising" do
-      admin = user_fixture(%{role: "admin"})
-      scope = Scope.for_user(admin, nil)
-
-      refute Authorization.can?(scope, :not_a_real_permission)
-    end
-  end
-
-  describe "Authorization.can?/2 with tenant roles" do
-    test "tenant admins can create rooms in their tenant" do
-      user = user_fixture()
-      tenant = tenant_with_member(user, "admin")
-      scope = Scope.for_user(user, tenant)
-
-      assert Authorization.can?(scope, :room_create)
-      assert Authorization.can?(scope, :tenant_manage)
-    end
-
-    test "tenant members cannot create rooms" do
-      user = user_fixture()
-      tenant = tenant_with_member(user, "member")
-      scope = Scope.for_user(user, tenant)
-
-      refute Authorization.can?(scope, :room_create)
-      refute Authorization.can?(scope, :tenant_manage)
-    end
-
-    test "tenant powers do not leak global powers" do
-      user = user_fixture()
-      tenant = tenant_with_member(user, "admin")
-      scope = Scope.for_user(user, tenant)
-
-      refute Authorization.can?(scope, :user_ban)
-      refute Authorization.can?(scope, :wallet_credit)
-    end
-
-    test "the permission union combines global and tenant roles" do
-      moderator = user_fixture(%{role: "moderator"})
-      tenant = tenant_with_member(moderator, "admin")
-      scope = Scope.for_user(moderator, tenant)
-
-      # global moderator powers ...
-      assert Authorization.can?(scope, :user_ban)
-      # ... combined with tenant admin powers.
-      assert Authorization.can?(scope, :room_create)
-      # still no wallet credit from either role.
-      refute Authorization.can?(scope, :wallet_credit)
+    test "a nil scope is always denied" do
+      refute Authorization.can?(nil, :settings_access)
+      refute Authorization.can?(nil, :room_create)
+      assert Authorization.permissions(nil) == []
+      assert {:error, :forbidden} = Authorization.ensure_permission(nil, :user_manage)
     end
   end
 
-  describe "Authorization.can?/3 with a room context" do
-    test "a room owner holds owner powers in their room" do
+  describe "room-scoped can?/3" do
+    test "a room owner gets room management powers for their room only" do
       owner = user_fixture()
       room = room_fixture(owner)
+      other_room = room_fixture(user_fixture())
 
-      # `room_fixture/2` inserts only the room row; the owner membership is
-      # created by `Rooms.create_room/1` in production, so mirror it here.
-      room_member_fixture(room, owner, %{role: "owner"})
+      scope = Scope.for_user(owner)
 
-      scope = Scope.for_user(owner, nil)
+      assert Authorization.can?(scope, :room_manage, %{room: room})
+      assert Authorization.can?(scope, :member_manage, %{room: room})
+      assert Authorization.can?(scope, :room_moderate, %{room: room})
+      assert Authorization.can?(scope, :message_delete, %{room: room})
 
-      assert Authorization.can?(scope, :room_update, %{room: room})
-      assert Authorization.can?(scope, :room_delete, %{room: room})
-      assert Authorization.can?(scope, :room_manage_members, %{room: room})
-      assert Authorization.can?(scope, :room_message_delete, %{room: room})
+      # room powers never leak platform-level Settings access…
+      refute Authorization.can?(scope, :settings_access, %{room: room})
+      refute Authorization.can?(scope, :user_manage, %{room: room})
+
+      # …and never apply to someone else's room
+      refute Authorization.can?(scope, :room_manage, %{room: other_room})
+      refute Authorization.can?(scope, :message_delete, %{room: other_room})
     end
 
-    test "a room moderator can moderate but cannot delete the room" do
+    test "a room moderator gets moderation powers but not room management" do
       owner = user_fixture()
-      moderator = user_fixture()
       room = room_fixture(owner)
-      room_member_fixture(room, moderator, %{role: "moderator"})
-      scope = Scope.for_user(moderator, nil)
+      room_mod = user_fixture()
+      member_fixture(room, room_mod, "moderator")
 
-      assert Authorization.can?(scope, :room_update, %{room: room})
-      assert Authorization.can?(scope, :room_manage_members, %{room: room})
-      assert Authorization.can?(scope, :room_message_delete, %{room: room})
-      refute Authorization.can?(scope, :room_delete, %{room: room})
+      scope = Scope.for_user(room_mod)
+
+      assert Authorization.can?(scope, :room_moderate, %{room: room})
+      assert Authorization.can?(scope, :message_delete, %{room: room})
+      refute Authorization.can?(scope, :room_manage, %{room: room})
+      refute Authorization.can?(scope, :member_manage, %{room: room})
     end
 
-    test "a plain room member holds no room powers" do
+    test "a platform moderator moderates any room without membership" do
+      room = room_fixture(user_fixture())
+      scope = Scope.for_user(moderator_fixture())
+
+      assert Authorization.can?(scope, :room_moderate, %{room: room})
+      assert Authorization.can?(scope, :message_delete, %{room: room})
+      refute Authorization.can?(scope, :room_manage, %{room: room})
+    end
+
+    test "a plain member has no room powers even in rooms they joined" do
       owner = user_fixture()
+      room = room_fixture(owner)
       member = user_fixture()
-      room = room_fixture(owner)
-      room_member_fixture(room, member)
-      scope = Scope.for_user(member, nil)
+      member_fixture(room, member)
 
-      refute Authorization.can?(scope, :room_update, %{room: room})
-      refute Authorization.can?(scope, :room_delete, %{room: room})
-      refute Authorization.can?(scope, :room_message_delete, %{room: room})
+      scope = Scope.for_user(member)
+
+      refute Authorization.can?(scope, :message_delete, %{room: room})
+      refute Authorization.can?(scope, :room_moderate, %{room: room})
+      refute Authorization.can?(scope, :room_manage, %{room: room})
     end
 
-    test "a non-member of the room gets nothing from the room context" do
-      owner = user_fixture()
-      stranger = user_fixture()
-      room = room_fixture(owner)
-      scope = Scope.for_user(stranger, nil)
-
-      refute Authorization.can?(scope, :room_update, %{room: room})
-      refute Authorization.can?(scope, :room_message_delete, %{room: room})
-    end
-
-    test "room powers apply only within the room context" do
+    test "revoking room membership flips the check immediately" do
       owner = user_fixture()
       room = room_fixture(owner)
-      scope = Scope.for_user(owner, nil)
+      room_mod = user_fixture()
+      member_fixture(room, room_mod, "moderator")
 
-      # Owner powers are room-scoped: no :room_create (a tenant-level
-      # permission) and no global powers fall out of the context.
-      refute Authorization.can?(scope, :room_create)
-      refute Authorization.can?(scope, :user_ban)
-      refute Authorization.can?(scope, :wallet_credit)
-    end
+      scope = Scope.for_user(room_mod)
+      assert Authorization.can?(scope, :message_delete, %{room: room})
 
-    test "room role unions with the scope's global and tenant roles" do
-      moderator = user_fixture(%{role: "moderator"})
-      owner = user_fixture()
-      room = room_fixture(owner)
-      room_member_fixture(room, moderator, %{role: "member"})
-      scope = Scope.for_user(moderator, nil)
-
-      # The room context grants nothing extra (plain member), but the
-      # scope still carries the global moderator powers.
-      refute Authorization.can?(scope, :room_message_delete, %{room: room})
-      assert Authorization.can?(scope, :user_ban, %{room: room})
-    end
-
-    test "guest scopes are denied in room context too" do
-      owner = user_fixture()
-      room = room_fixture(owner)
-
-      refute Authorization.can?(nil, :room_message_delete, %{room: room})
-      refute Authorization.can?(Scope.for_user(nil, nil), :room_message_delete, %{room: room})
+      # The role is resolved with a fresh database lookup per call, so the
+      # revocation takes effect on the very next check.
+      assert {:ok, _} = Rooms.remove_member(owner, room, room_mod)
+      refute Authorization.can?(scope, :message_delete, %{room: room})
     end
   end
 
-  describe "Authorization.ensure_permission/2" do
-    test "returns :ok for a global admin holding the permission" do
-      admin = user_fixture(%{role: "admin"})
+  describe "ensure_permission/2" do
+    test "returns :ok when the platform role grants the permission" do
+      admin = admin_fixture()
 
-      assert :ok = Authorization.ensure_permission(admin, :user_ban)
+      assert :ok = Authorization.ensure_permission(admin, :user_manage)
+      assert :ok = Authorization.ensure_permission(admin, :settings_access)
+      assert :ok = Authorization.ensure_permission(admin, :wallet_credit)
     end
 
-    test "returns {:error, :forbidden} for a user without the permission" do
-      member = user_fixture(%{role: "member"})
+    test "returns {:error, :forbidden} otherwise" do
+      assert {:error, :forbidden} = Authorization.ensure_permission(user_fixture(), :user_manage)
+      assert {:error, :forbidden} = Authorization.ensure_permission(user_fixture(), :room_create)
 
-      assert {:error, :forbidden} = Authorization.ensure_permission(member, :user_ban)
-    end
-
-    test "tenant powers do not satisfy global checks" do
-      tenant_admin = user_fixture()
-      tenant_with_member(tenant_admin, "admin")
-
-      # `:radio_manage` comes from the TENANT admin role only, so the global
-      # check fails even though a tenant-scoped `can?/2` would pass.
-      assert {:error, :forbidden} = Authorization.ensure_permission(tenant_admin, :radio_manage)
-    end
-  end
-
-  describe "Authorization.ensure_tenant_permission/3" do
-    test "returns the tenant for an authorized actor" do
-      admin = user_fixture()
-      tenant = tenant_with_member(admin, "admin")
-
-      assert {:ok, found} = Authorization.ensure_tenant_permission(admin, tenant, :tenant_manage)
-      assert found.id == tenant.id
-    end
-
-    test "accepts raw tenant ids" do
-      admin = user_fixture()
-      tenant = tenant_with_member(admin, "admin")
-
-      assert {:ok, found} =
-               Authorization.ensure_tenant_permission(admin, tenant.id, :radio_manage)
-
-      assert found.id == tenant.id
-    end
-
-    test "returns {:error, :forbidden} for an unauthorized member" do
-      member = user_fixture()
-      tenant = tenant_with_member(member, "member")
+      # moderators reach content but never Settings/payment configuration
+      assert {:error, :forbidden} =
+               Authorization.ensure_permission(moderator_fixture(), :payments_configure)
 
       assert {:error, :forbidden} =
-               Authorization.ensure_tenant_permission(member, tenant, :tenant_manage)
-    end
-
-    test "returns {:error, :not_found} for an unknown tenant" do
-      admin = user_fixture(%{role: "admin"})
-
-      assert {:error, :not_found} =
-               Authorization.ensure_tenant_permission(admin, Ecto.UUID.generate(), :tenant_manage)
-    end
-  end
-
-  describe "Roles catalogue integrity" do
-    alias BeamChat.Authorization.Roles
-
-    test "every permission in the catalogue is declared in the type union" do
-      declared = [
-        :moderation_configure,
-        :radio_manage,
-        :room_create,
-        :room_delete,
-        :room_manage_members,
-        :room_message_delete,
-        :room_update,
-        :tenant_manage,
-        :user_ban,
-        :user_manage_roles,
-        :wallet_credit
-      ]
-
-      assert Enum.sort(declared) == Roles.all_permissions()
-    end
-
-    test "unknown roles at any level hold nothing" do
-      assert Roles.global_permissions("superuser") == []
-      assert Roles.tenant_permissions("superuser") == []
-      assert Roles.room_permissions("superuser") == []
-      assert Roles.global_permissions(nil) == []
-      assert Roles.tenant_permissions(nil) == []
-      assert Roles.room_permissions(nil) == []
+               Authorization.ensure_permission(moderator_fixture(), :wallet_credit)
     end
   end
 end

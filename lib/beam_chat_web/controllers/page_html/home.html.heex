@@ -1,85 +1,97 @@
-<div class="grid gap-10 lg:gap-16 lg:grid-cols-[minmax(0,1fr)_minmax(0,24rem)] lg:items-start">
-  <div class="space-y-8">
-    <p class="text-label-md uppercase tracking-[0.12em] text-emerald-700">
-      Real-time community
+<div
+  class="grid gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,24rem)] lg:items-start lg:gap-16"
+  id="home-page"
+>
+  <div class="flex flex-col gap-8">
+    <p class="text-label-md uppercase tracking-widest text-primary">
+      Real-time community chat
     </p>
 
-    <h1 class="font-display text-display-lg sm:text-5xl tracking-tight text-balance text-slate-900">
-      Chat that stays fast at any scale.
+    <h1 class="max-w-2xl text-balance text-display-lg tracking-tight text-base-content">
+      Rooms, wallet, and live radio — one platform, in real time.
     </h1>
 
-    <p class="text-body-lg text-slate-600 max-w-xl leading-relaxed">
-      BeamChat is built for rooms, direct messages, live presence, county wallets, and broadcast
-      radio — powered by Phoenix and LiveView so the interface stays responsive without shipping
-      a separate SPA.
+    <p class="max-w-xl text-body-lg leading-relaxed text-base-content/70">
+      BeamChat organizes conversation into rooms grouped under an admin-managed
+      category tree, funds paid rooms from a per-user wallet (M-Pesa or card),
+      and streams face-to-face video and live radio over LiveKit — all on one
+      deployment with one set of admins.
     </p>
 
-    <div class="flex flex-col sm:flex-row gap-3 sm:items-center">
-      <a href={~p"/auth/register"} class="btn btn-primary rounded-md px-8">Create an account</a>
-      <a
-        href={~p"/auth/login"}
-        class="btn rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 hover:text-slate-900"
-      >
-        Sign in
-      </a>
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
+      <a href={~p"/auth/register"} class="btn btn-primary px-8">Create an account</a>
+      <a href={~p"/auth/login"} class="btn btn-outline">Sign in</a>
     </div>
 
-    <dl class="grid grid-cols-2 sm:grid-cols-3 gap-6 pt-6 border-t border-slate-200 max-w-2xl">
+    <dl class="grid max-w-2xl grid-cols-2 gap-6 border-t border-base-300 pt-6 sm:grid-cols-3">
       <div>
-        <dt class="text-label-sm uppercase tracking-wide text-slate-500">Transport</dt>
-
-        <dd class="mt-1 font-display text-lg font-semibold text-slate-900">WebSockets</dd>
+        <dt class="text-label-sm uppercase tracking-wide text-base-content/40">Transport</dt>
+        <dd class="mt-1 text-lg font-semibold">WebSockets</dd>
       </div>
-
       <div>
-        <dt class="text-label-sm uppercase tracking-wide text-slate-500">Stack</dt>
-
-        <dd class="mt-1 font-display text-lg font-semibold text-slate-900">Elixir · LiveView</dd>
+        <dt class="text-label-sm uppercase tracking-wide text-base-content/40">Stack</dt>
+        <dd class="mt-1 text-lg font-semibold">Elixir · LiveView</dd>
       </div>
-
       <div class="col-span-2 sm:col-span-1">
-        <dt class="text-label-sm uppercase tracking-wide text-slate-500">Themes</dt>
-
-        <dd class="mt-1 font-display text-lg font-semibold text-slate-900">
-          Light · Dark · System
-        </dd>
+        <dt class="text-label-sm uppercase tracking-wide text-base-content/40">Media</dt>
+        <dd class="mt-1 text-lg font-semibold">LiveKit</dd>
       </div>
     </dl>
   </div>
 
-  <aside class="rounded-lg border border-slate-200 bg-white p-6 sm:p-8 space-y-6 shadow-civic-2">
-    <h2 class="font-display text-lg font-semibold text-slate-900">Ships with this build</h2>
+  <aside class="card bg-white border border-base-300 shadow-panel rounded-box p-6 sm:p-8">
+    <h2 class="text-headline-sm">What's inside</h2>
 
-    <ul class="space-y-4 text-body-md text-slate-600">
+    <ul class="mt-5 flex flex-col gap-4 text-sm text-base-content/70">
       <li class="flex gap-3">
-        <span class="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 text-xs font-bold">
-          1
-        </span>
-        <span>Tenant-scoped rooms, presence, and a moderated message pipeline.</span>
-      </li>
-
-      <li class="flex gap-3">
-        <span class="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 text-xs font-bold">
-          2
-        </span>
-        <span>Wallet-backed paid rooms, M-Pesa, and settlement audit trails.</span>
-      </li>
-
-      <li class="flex gap-3">
-        <span class="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 text-xs font-bold">
-          3
+        <span class="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">
+          <.icon name="hero-check" class="size-3.5" />
         </span>
         <span>
-          County radio over LiveKit — listen, manage, and archive in the Admin Console.
+          <strong class="font-semibold text-base-content">Rooms with a structure.</strong>
+          Public, private, secret, and paid rooms hanging off a category
+          tree of arbitrary depth.
+        </span>
+      </li>
+
+      <li class="flex gap-3">
+        <span class="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">
+          <.icon name="hero-banknotes" class="size-3.5" />
+        </span>
+        <span>
+          <strong class="font-semibold text-base-content">A wallet that pays for rooms.</strong>
+          Top up with M-Pesa (STK push) or card; a paid room is unlocked by a
+          time-boxed subscription, debited atomically.
+        </span>
+      </li>
+
+      <li class="flex gap-3">
+        <span class="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">
+          <.icon name="hero-shield-check" class="size-3.5" />
+        </span>
+        <span>
+          <strong class="font-semibold text-base-content">Moderation with a paper trail.</strong>
+          Word, link, and pattern rules run before persistence — every block
+          and flag is logged.
+        </span>
+      </li>
+
+      <li class="flex gap-3">
+        <span class="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">
+          <.icon name="hero-signal" class="size-3.5" />
+        </span>
+        <span>
+          <strong class="font-semibold text-base-content">Video and radio over LiveKit.</strong>
+          In-room face-to-face calls and admin-run radio stations, published
+          straight into LiveKit rooms.
         </span>
       </li>
     </ul>
 
-    <div class="rounded-md border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600 leading-relaxed">
-      API health check: <a href="/health" class="link link-primary font-medium">GET /health</a>
-      · design tokens:
-      <code class="font-mono text-code-sm bg-slate-100 px-1 rounded">DESIGN.md</code>
-      (repo root designs folder)
+    <div class="mt-6 rounded-md border border-base-200 bg-base-100 p-4 text-xs leading-relaxed text-base-content/60">
+      One deployment, one set of admins: roles, bans, payment providers,
+      and the category structure are managed from a single settings surface.
+      API health check: <a href="/health" class="link font-medium link-primary">GET /health</a>
     </div>
   </aside>
 </div>

@@ -1,9 +1,9 @@
 defmodule BeamChatWeb.RadioLive.Index do
   @moduledoc """
-  The listener-facing radio lineup: the active stations of the tenant,
-  with a LiveKit audio player per station.
+  The listener-facing radio lineup: the platform's active stations as a
+  card grid, with a LiveKit audio player per station.
 
-  Listening needs no special permission — any tenant member can join.
+  Listening needs no special permission — any signed-in member can join.
   The token issued per listen click is **subscribe-only**
   (`BeamChat.Video.TokenService.generate_listener_token/3`), so listeners
   can never publish into a station's room.
@@ -19,95 +19,128 @@ defmodule BeamChatWeb.RadioLive.Index do
   alias BeamChat.Video.TokenService
 
   @impl true
-  def mount(params, session, socket) do
+  def mount(_params, _session, socket) do
     socket =
       socket
       |> assign(:page_title, "Radio")
-      |> assign_active_tenant(params, session)
+      |> assign(:active_nav, :radio)
       |> assign(:active_station_id, nil)
       |> assign(:player_state, :idle)
 
-    {:ok, stream_stations(socket, socket.assigns.current_user, socket.assigns.tenant)}
+    {:ok, stream_stations(socket)}
   end
 
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="max-w-3xl mx-auto space-y-4">
-      <h1 class="text-xl font-display font-semibold text-base-content">Radio</h1>
+    <div class="space-y-6" id="radio-page">
+      <div class="space-y-1">
+        <p class="text-label-sm uppercase tracking-[0.12em] text-base-content/50">
+          Live audio
+        </p>
+
+        <h1 class="text-headline-lg">Radio</h1>
+
+        <p class="text-sm text-base-content/50">
+          Stations streaming live over LiveKit. One station plays at a time.
+        </p>
+      </div>
 
       <div
-        class="rounded-box border border-base-300 bg-base-100 shadow-sm"
+        class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3"
         id="station-rows"
         phx-update="stream"
       >
-        <p id="station-rows-empty" class="hidden only:block text-sm text-base-content/60 p-4">
-          No stations are live in this tenant right now.
-        </p>
-
+        <%!-- Streams have no native empty state — the only:block trick
+             shows this card when the stream has no items. --%>
         <div
-          :for={{id, station} <- @streams.stations}
-          id={id}
-          class="flex items-center justify-between gap-3 p-4 border-b border-base-200 last:border-b-0"
+          id="station-rows-empty"
+          class="hidden only:block sm:col-span-2 xl:col-span-3 rounded-box border border-base-300 bg-white shadow-panel"
         >
-          <div class="min-w-0">
-            <p class="font-medium text-sm truncate">{station.name}</p>
-            <p :if={station.description} class="text-xs text-base-content/60 truncate">
-              {station.description}
+          <div class="flex flex-col items-center gap-2 py-12 text-center">
+            <.icon name="hero-signal" class="size-8 text-base-content/30" />
+            <p class="text-headline-sm">Nothing on air right now</p>
+            <p class="text-sm text-base-content/50">
+              No stations are live. Check back soon.
             </p>
           </div>
+        </div>
 
-          <div class="flex items-center gap-2 shrink-0">
-            <.station_status_badge status={station.status} />
+        <article
+          :for={{id, station} <- @streams.stations}
+          id={id}
+          class="card bg-white border border-base-300 shadow-panel rounded-box transition-shadow hover:shadow-raised"
+        >
+          <div class="card-body gap-4">
+            <div class="flex items-start justify-between gap-3">
+              <h2 class="text-headline-sm truncate">{station.name}</h2>
+              <.station_status_badge status={station.status} />
+            </div>
 
-            <div id={"player-#{station.id}"} phx-hook="RadioPlayer" data-room={room_name(station)}>
-              <button
-                :if={@active_station_id != station.id}
-                type="button"
-                phx-click="listen"
-                phx-value-id={station.id}
-                class="btn btn-primary btn-xs"
-                id={"listen-#{station.id}"}
+            <p :if={station.description} class="text-sm text-base-content/50 line-clamp-2">
+              {station.description}
+            </p>
+
+            <%!-- Player controls live inside the RadioPlayer hook's
+                 container: the hook creates and attaches a hidden <audio>
+                 element here when the station connects. Keep the ids and
+                 the data-room / phx-hook wiring exactly as the hook
+                 expects (assets/js/hooks/radio_player.js). --%>
+            <div class="flex items-center justify-end border-t border-base-200 pt-3">
+              <div
+                id={"player-#{station.id}"}
+                phx-hook="RadioPlayer"
+                data-room={room_name(station)}
+                class="flex items-center gap-2"
               >
-                Listen
-              </button>
+                <button
+                  :if={@active_station_id != station.id}
+                  type="button"
+                  phx-click="listen"
+                  phx-value-id={station.id}
+                  class="btn btn-primary btn-sm gap-1.5"
+                  id={"listen-#{station.id}"}
+                >
+                  <.icon name="hero-play" class="size-4" /> Listen
+                </button>
 
-              <span
-                :if={@active_station_id == station.id && @player_state == :connecting}
-                class="text-xs text-base-content/60"
-                id={"connecting-#{station.id}"}
-              >
-                Connecting…
-              </span>
+                <span
+                  :if={@active_station_id == station.id && @player_state == :connecting}
+                  class="text-label-sm text-base-content/50"
+                  id={"connecting-#{station.id}"}
+                >
+                  Connecting…
+                </span>
 
-              <span
-                :if={@active_station_id == station.id && @player_state == :listening}
-                class="badge badge-success badge-sm"
-                id={"listening-#{station.id}"}
-              >
-                On air
-              </span>
+                <span
+                  :if={@active_station_id == station.id && @player_state == :listening}
+                  class="badge badge-success badge-sm"
+                  id={"listening-#{station.id}"}
+                >
+                  On air
+                </span>
 
-              <span
-                :if={@active_station_id == station.id && @player_state == :error}
-                class="text-xs text-error"
-                id={"player-error-#{station.id}"}
-              >
-                Could not connect
-              </span>
+                <span
+                  :if={@active_station_id == station.id && @player_state == :error}
+                  class="text-label-sm text-error"
+                  id={"player-error-#{station.id}"}
+                >
+                  Could not connect
+                </span>
 
-              <button
-                :if={@active_station_id == station.id}
-                type="button"
-                phx-click="stop_listen"
-                class="btn btn-ghost btn-xs"
-                id={"stop-#{station.id}"}
-              >
-                Stop
-              </button>
+                <button
+                  :if={@active_station_id == station.id}
+                  type="button"
+                  phx-click="stop_listen"
+                  class="btn btn-ghost btn-sm gap-1.5"
+                  id={"stop-#{station.id}"}
+                >
+                  <.icon name="hero-stop" class="size-4" /> Stop
+                </button>
+              </div>
             </div>
           </div>
-        </div>
+        </article>
       </div>
     </div>
     """
@@ -181,14 +214,8 @@ defmodule BeamChatWeb.RadioLive.Index do
   # Helpers
   # ---------------------------------------------------------------------------
 
-  defp stream_stations(socket, _user, nil) do
-    socket
-    |> assign(:stations_list, [])
-    |> stream(:stations, [], reset: true)
-  end
-
-  defp stream_stations(socket, user, tenant) do
-    stations = Streaming.list_active_stations(user, tenant)
+  defp stream_stations(socket) do
+    stations = Streaming.list_active_stations()
 
     socket
     |> assign(:stations_list, stations)
@@ -198,18 +225,15 @@ defmodule BeamChatWeb.RadioLive.Index do
   # Streamed items do not re-render when other assigns change; the player
   # controls live inside the streamed rows, so every player-state change
   # must re-stream the items (AGENTS.md LiveView streams).
-  defp restream_stations(socket) do
-    stream_stations(socket, socket.assigns.current_user, socket.assigns.tenant)
-  end
+  defp restream_stations(socket), do: stream_stations(socket)
 
-  defp find_active_station(socket, station_id) do
-    Enum.find(socket.assigns.stations_list, &(&1.id == station_id))
-  end
+  defp find_active_station(socket, station_id),
+    do: Enum.find(socket.assigns.stations_list, &(&1.id == station_id))
 
   defp station_gone(socket) do
     socket
     |> put_flash(:error, "That station is no longer available.")
-    |> stream_stations(socket.assigns.current_user, socket.assigns.tenant)
+    |> stream_stations()
   end
 
   # One station at a time: disconnect_active is nil-safe, so starting a new

@@ -50,13 +50,16 @@ defmodule BeamChat.Video.TokenService do
   ## Caller responsibility
 
   This service does **not** re-verify `User.is_banned` against the database.
-  The caller (`VideoLive.handle_event/3` for `join_video`) must perform a
+  The caller (`VideoLive.handle_event/3` for join_video) must perform a
   fresh `Repo.get_by(User, id: ..., is_banned: false)` lookup before calling
   `generate_token/3` — see `BeamChatWeb.VideoLive` for the canonical check.
   Rationale: the user struct held in `socket.assigns.current_user` is
   populated at socket-connect time from the cookie and may be stale.
   """
-  @spec generate_token(%{id: Ecto.UUID.t()}, Ecto.UUID.t(), keyword()) ::
+  # The user is specced as a plain map: callers hand us full `User` structs
+  # (or test stand-ins), and Ecto struct fields carry no Dialyzer types, so
+  # a narrower `%{id: Ecto.UUID.t()}` spec is unsatisfiable for structs.
+  @spec generate_token(map(), Ecto.UUID.t(), keyword()) ::
           {:ok, token_payload()} | {:error, :not_configured}
   def generate_token(user, room_id, opts \\ []) do
     case lk_config() do
@@ -124,7 +127,7 @@ defmodule BeamChat.Video.TokenService do
   `canPublish`/`canSubscribe`, so this token is signed directly with
   `Joken` using LiveKit's documented access-token claim shape.
   """
-  @spec generate_listener_token(%{id: Ecto.UUID.t()}, String.t(), keyword()) ::
+  @spec generate_listener_token(map(), String.t(), keyword()) ::
           {:ok, token_payload()} | {:error, :not_configured}
   def generate_listener_token(user, room_name, opts \\ []) do
     case lk_config() do

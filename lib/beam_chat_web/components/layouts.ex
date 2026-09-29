@@ -3,6 +3,7 @@ defmodule BeamChatWeb.Layouts do
   Application-wide layouts (including the root HTML skeleton) and related
   template helpers.
   """
+
   use BeamChatWeb, :html
 
   # Embed all files in layouts/* within this module.
@@ -17,25 +18,62 @@ defmodule BeamChatWeb.Layouts do
   end
 
   @doc """
-  Workspace tab in the top bar. Active state tracks the page's
-  `:active_tab` assign (`:rooms`, `:channel`, `:messages`, `:wallet`,
-  `:admin`) so navigation reads current instead of colored guesswork.
+  Up to two initials for the session chip (username or email derived) —
+  falls back to a bullet for accounts with neither.
   """
-  attr :tab, :atom, required: true
-  attr :active_tab, :atom, default: nil
-  attr :label, :string, required: true
-  attr :to, :any, required: true
+  def initials(user) when is_map(user) do
+    source = user.username || user.email || "?"
 
-  def topbar_tab(assigns) do
+    source
+    |> String.trim()
+    |> String.split(~r/[\s._-]+/, trim: true)
+    |> Enum.take(2)
+    |> Enum.map_join("", &String.slice(&1, 0, 1))
+    |> String.upcase()
+  end
+
+  def initials(_), do: "?"
+
+  @doc """
+  Sidebar / nav-strip link with a leading icon. Active state tracks the
+  page's `:active_nav` assign so navigation reads current.
+  """
+  attr :to, :any, required: true
+  attr :label, :string, required: true
+  attr :icon, :string, required: true
+  attr :active, :boolean, default: false
+
+  attr :compact, :boolean,
+    default: false,
+    doc: "tighter style for the mobile horizontal strip"
+
+  def nav_link(%{compact: true} = assigns) do
     ~H"""
     <.link
       navigate={@to}
       class={[
-        "whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition-colors",
-        @active_tab == @tab && "bg-emerald-600 text-white",
-        @active_tab != @tab && "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+        "flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors",
+        @active && "bg-primary text-primary-content",
+        !@active && "text-base-content/70 hover:bg-base-200 hover:text-base-content"
       ]}
     >
+      <.icon name={@icon} class="size-4" />
+      {@label}
+    </.link>
+    """
+  end
+
+  def nav_link(assigns) do
+    ~H"""
+    <.link
+      navigate={@to}
+      class={[
+        "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium transition-colors",
+        @active && "bg-primary text-primary-content",
+        !@active && "text-base-content/70 hover:bg-base-200 hover:text-base-content"
+      ]}
+    >
+      <.icon name={@icon} class="size-4.5" />
       {@label}
     </.link>
     """
@@ -54,7 +92,8 @@ defmodule BeamChatWeb.Layouts do
   def flash_group(assigns) do
     ~H"""
     <div id={@id} aria-live="polite">
-      <.flash kind={:info} flash={@flash} /> <.flash kind={:error} flash={@flash} />
+      <.flash kind={:info} flash={@flash} />
+      <.flash kind={:error} flash={@flash} />
       <.flash
         id="client-error"
         kind={:error}
@@ -78,50 +117,6 @@ defmodule BeamChatWeb.Layouts do
         {gettext("Attempting to reconnect")}
         <.icon name="hero-arrow-path" class="ml-1 size-3 motion-safe:animate-spin" />
       </.flash>
-    </div>
-    """
-  end
-
-  @doc """
-  Provides dark vs light theme toggle based on themes defined in app.css.
-
-  See <head> in root.html.heex which applies the theme before page load.
-  """
-  def theme_toggle(assigns) do
-    ~H"""
-    <div
-      class="relative inline-flex flex-row items-center rounded-full border border-base-300 bg-base-200/80 p-0.5 shadow-inner"
-      role="group"
-      aria-label={gettext("Color theme")}
-    >
-      <div class="absolute w-1/3 h-[calc(100%-4px)] top-0.5 rounded-full bg-base-100 shadow-sm left-0.5 motion-safe:transition-[left] motion-safe:duration-200 [html[data-theme=light]_&]:left-[33.333%] [html[data-theme=dark]_&]:left-[calc(66.666%-2px)]" />
-      <button
-        type="button"
-        class="relative z-10 flex p-2 cursor-pointer w-9 justify-center rounded-full hover:bg-base-100/50"
-        phx-click={JS.dispatch("phx:set-theme")}
-        data-phx-theme="system"
-        aria-label={gettext("Use system theme")}
-      >
-        <.icon name="hero-computer-desktop-micro" class="size-4 opacity-80" />
-      </button>
-      <button
-        type="button"
-        class="relative z-10 flex p-2 cursor-pointer w-9 justify-center rounded-full hover:bg-base-100/50"
-        phx-click={JS.dispatch("phx:set-theme")}
-        data-phx-theme="light"
-        aria-label={gettext("Use light theme")}
-      >
-        <.icon name="hero-sun-micro" class="size-4 opacity-80" />
-      </button>
-      <button
-        type="button"
-        class="relative z-10 flex p-2 cursor-pointer w-9 justify-center rounded-full hover:bg-base-100/50"
-        phx-click={JS.dispatch("phx:set-theme")}
-        data-phx-theme="dark"
-        aria-label={gettext("Use dark theme")}
-      >
-        <.icon name="hero-moon-micro" class="size-4 opacity-80" />
-      </button>
     </div>
     """
   end

@@ -1,27 +1,25 @@
 defmodule BeamChatWeb.ConnCase do
   @moduledoc """
-  Test helper for connection-based tests. Provides `Phoenix.ConnTest`
-  utilities and other helpers for building common data structures and
-  querying the data layer. Enables the SQL sandbox so database changes
-  are reverted after each test.
-  PostgreSQL, you can even run database tests asynchronously
-  by setting `use BeamChatWeb.ConnCase, async: true`, although
-  this option is not recommended for other databases.
+  Defines the test case to be used by tests that require a
+  connection to the application's HTTP layer (controllers and plugs).
   """
 
   use ExUnit.CaseTemplate
 
+  alias BeamChatWeb.Plugs
+
   using do
     quote do
-      # The default endpoint for testing
-      @endpoint BeamChatWeb.Endpoint
-
-      use BeamChatWeb, :verified_routes
-
-      # Import conveniences for testing with connections
-      import Plug.Conn
+      # Import conveniences for testing HTTP connections
       import Phoenix.ConnTest
       import BeamChatWeb.ConnCase
+      import BeamChat.TestFixtures
+
+      alias BeamChat.Repo
+      alias BeamChatWeb.Plugs
+
+      # The default endpoint for testing
+      @endpoint BeamChatWeb.Endpoint
     end
   end
 
@@ -30,12 +28,18 @@ defmodule BeamChatWeb.ConnCase do
     {:ok, conn: Phoenix.ConnTest.build_conn()}
   end
 
-  @doc "Puts a valid session token for `user` on the connection."
+  @doc """
+  Logs the given user into the connection with a real session token and
+  runs the browser pipeline's session fetch, so `conn.assigns.current_user`
+  and `conn.assigns.current_scope` are populated like production.
+  """
   def log_in_user(conn, user) do
     token = BeamChat.Accounts.generate_user_session_token(user)
 
     conn
-    |> Plug.Test.init_test_session(%{})
-    |> Plug.Conn.put_session("user_token", token)
+    |> Phoenix.ConnTest.init_test_session(%{})
+    |> Plug.Conn.put_session(:user_token, token)
+    |> Plugs.FetchCurrentUser.call([])
+    |> Plugs.AssignScope.call([])
   end
 end

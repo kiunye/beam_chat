@@ -1,9 +1,16 @@
 defmodule BeamChatWeb.Webhooks.PaystackWebhookController do
+  @moduledoc """
+  Receives Paystack events at `POST /webhooks/paystack`. The HMAC-SHA512
+  signature header is verified against the admin-managed Paystack
+  credentials; `charge.success` events flow into the provider's confirm
+  callback, which matches the reference against the pending wallet
+  transaction it claims to complete and credits exactly once (PRD §2.7).
+  """
+
   use BeamChatWeb, :controller
 
+  alias BeamChat.Payments
   alias BeamChat.Payments.PaystackClient
-  alias BeamChat.Payments.PaystackUserLookup
-  alias BeamChat.Wallet
 
   def create(conn, _params) do
     raw = conn.private[:raw_body] || ""
@@ -13,17 +20,19 @@ defmodule BeamChatWeb.Webhooks.PaystackWebhookController do
       |> get_req_header("x-paystack-signature")
       |> List.first()
 
-    if PaystackClient.valid_signature?(raw, sig) do
-      dispatch_paystack_body(conn, raw)
+    credentials = Payments.fetch_credentials("paystack")
+
+    if PaystackClient.valid_signature?(credentials, raw, sig) do
+      dispatch(conn, raw)
     else
       send_resp(conn, 401, "invalid signature")
     end
   end
 
-  defp dispatch_paystack_body(conn, raw) do
+  defp dispatch(conn, raw) do
     case Jason.decode(raw) do
-      {:ok, %{"event" => "charge.success", "data" => data}} ->
-        handle_charge_success(data)
+      {:ok, %{"event" => "charge.success", "data" => data}} when is_map(data) ->
+        _ = Payments.confirm_topup("paystack", %{"data" => data})
         send_resp(conn, 200, "ok")
 
       {:ok, _} ->
@@ -33,50 +42,4 @@ defmodule BeamChatWeb.Webhooks.PaystackWebhookController do
         send_resp(conn, 400, "bad json")
     end
   end
-
-  defp handle_charge_success(data) do
-    if data["status"] == "success" and is_binary(data["reference"]) do
-      amount_major = paystack_amount_to_decimal(data["amount"])
-
-      if Decimal.positive?(amount_major) do
-        maybe_credit_user(data, amount_major)
-      end
-    end
-  end
-
-  defp maybe_credit_user(data, amount_major) do
-    reference = data["reference"]
-
-    case PaystackUserLookup.user_id_from_charge_data(data) do
-      nil -> :ok
-      uid -> credit_user(uid, amount_major, reference, data)
-    end
-  end
-
-  defp credit_user(uid, amount_major, reference, data) do
-    # Forward the Paystack-reported currency so `Wallet` can cross-check it
-    # against the wallet's KES denomination when no pending row exists.
-    # See SECURITY_REVIEW.md P1 #9.
-    extra_metadata = %{
-      "paystack_id" => data["id"],
-      "source" => "webhook",
-      "currency" => data["currency"]
-    }
-
-    _ =
-      Wallet.complete_provider_credit(uid, amount_major, "paystack", reference, extra_metadata)
-
-    :ok
-  end
-
-  defp paystack_amount_to_decimal(amount) when is_integer(amount) do
-    amount |> Decimal.new() |> Decimal.div(Decimal.new(100))
-  end
-
-  defp paystack_amount_to_decimal(amount) when is_binary(amount) do
-    amount |> String.to_integer() |> paystack_amount_to_decimal()
-  end
-
-  defp paystack_amount_to_decimal(%Decimal{} = d), do: d
-  defp paystack_amount_to_decimal(_), do: Decimal.new("0")
 end

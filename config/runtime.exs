@@ -109,6 +109,19 @@ if config_env() == :prod do
 
   config :beam_chat, :sso_jwt_secret, sso_jwt_secret
 
+  # Passphrase used to derive the AES-256 key that encrypts payment
+  # provider credentials at rest (payment_provider_configs). The dev
+  # default must never reach production.
+  config_encryption_key =
+    System.get_env("CONFIG_ENCRYPTION_KEY") ||
+      raise """
+      environment variable CONFIG_ENCRYPTION_KEY is missing.
+      Use a long random string; it encrypts the payment provider
+      credentials stored in the database.
+      """
+
+  config :beam_chat, :config_encryption_key, config_encryption_key
+
   # Optional comma-separated list of accepted secrets (current first, then
   # previous secret(s)) for zero-downtime SSO secret rotation. Empty/absent
   # falls back to SSO_JWT_SECRET alone. See SECURITY_REVIEW.md P2 #19.

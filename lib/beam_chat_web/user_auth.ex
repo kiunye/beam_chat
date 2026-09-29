@@ -54,6 +54,12 @@ defmodule BeamChatWeb.UserAuth do
   end
 
   def log_in_user(conn, %User{} = user, _params \\ %{}) do
+    # The single login chokepoint for every auth path (password, magic
+    # link, OAuth, SSO exchange) — the one place the bootstrap-admin
+    # promotion can run so a fresh deployment gets its first admin
+    # without a chicken-and-egg Settings deadlock (PRD §2.1).
+    {:ok, user} = Accounts.maybe_promote_bootstrap_admin(user)
+
     token = Accounts.generate_user_session_token(user)
 
     conn
