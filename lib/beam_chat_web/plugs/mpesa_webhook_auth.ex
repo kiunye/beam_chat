@@ -17,9 +17,12 @@ defmodule BeamChatWeb.Plugs.MpesaWebhookAuth do
   | `prod`         | `""` or `nil`     | `403` — **fail closed**                |
   | `prod`         | `<configured>`    | `403` unless path secret matches      |
 
-  Fail-closed in prod is intentional: an unauthenticated webhook paying real
-  money into real wallets is unacceptable, and operator misconfiguration is
-  exactly the risk we're protecting against. See `SECURITY_REVIEW.md` P0 #3.
+  The configured secret is the `callback_secret` in the M-Pesa provider's
+  admin-managed credentials (`payment_provider_configs`), and it only
+  counts while the provider is enabled. Fail-closed in prod is
+  intentional: an unauthenticated webhook paying real money into real
+  wallets is unacceptable, and operator misconfiguration is exactly the
+  risk we're protecting against (PRD §4.4).
 
   ## Forcing enforcement in tests
 
@@ -33,6 +36,7 @@ defmodule BeamChatWeb.Plugs.MpesaWebhookAuth do
 
   import Plug.Conn
 
+  alias BeamChat.Payments
   alias Plug.Crypto
 
   @impl Plug
@@ -94,9 +98,7 @@ defmodule BeamChatWeb.Plugs.MpesaWebhookAuth do
   end
 
   defp configured_secret do
-    Application.get_env(:beam_chat, :mpesa, [])
-    |> Keyword.get(:callback_secret, "")
-    |> to_string()
+    Payments.mpesa_callback_secret() || ""
   end
 
   defp reject(conn, reason) do

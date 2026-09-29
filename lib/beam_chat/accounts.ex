@@ -1,11 +1,16 @@
 defmodule BeamChat.Accounts do
-  @moduledoc "Registration, credentials, sessions, magic links, and OAuth user upserts."
+  @moduledoc """
+  Registration, credentials, sessions, magic links, OAuth user upserts,
+  platform role and ban management, and the bootstrap-admin promotion.
+  """
 
   import Ecto.Query
 
   alias BeamChat.Accounts.{User, UserToken}
   alias BeamChat.AuthEmail
+  alias BeamChat.Authorization
   alias BeamChat.Mailer
+  alias BeamChat.Moderation
   alias BeamChat.Repo
 
   ## Registration & login (password)
@@ -228,15 +233,25 @@ defmodule BeamChat.Accounts do
   @doc """
   Bans a user and invalidates all active sessions/magic-link tokens atomically.
 
+  The acting user must hold the `:user_manage` permission (platform
+  admins only — see `BeamChat.Authorization.Roles`); otherwise returns
+  `{:error, :forbidden}` without touching the target user.
+
   Returns `{:ok, user}` with the refreshed user struct, or `{:error, changeset}`.
   After this call, any cookie previously held by `user_id` is dead: the
   `users_tokens` rows are gone, so `get_user_by_session_token/1` will return `nil`,
   and the `BeamChatWeb.UserAuth.fetch_current_user` plug will treat the request
   as logged out (defence in depth, since `is_banned: true` also short-circuits).
   """
-  def ban_user(%User{id: user_id}, reason \\ nil) when is_binary(user_id) do
+  def ban_user(%User{} = actor, %User{} = user, reason \\ nil) do
+    with :ok <- Authorization.ensure_permission(actor, :user_manage) do
+      do_ban_user(actor, user, reason)
+    end
+  end
+
+  defp do_ban_user(%User{} = actor, %User{} = target, reason) do
     Repo.transaction(fn ->
-      user = Repo.get!(User, user_id)
+      user = Repo.get!(User, target.id)
 
       changeset =
         user
@@ -244,7 +259,9 @@ defmodule BeamChat.Accounts do
         |> Ecto.Changeset.put_change(:ban_reason, reason)
 
       with {:ok, updated} <- Repo.update(changeset),
-           {:ok, _count} <- delete_user_tokens(user_id) do
+           {:ok, _count} <- delete_user_tokens(user.id),
+           {:ok, _log} <-
+             Moderation.log_user_action(actor, updated, "user_banned", reason) do
         updated
       else
         {:error, reason} -> Repo.rollback(reason)
@@ -259,17 +276,181 @@ defmodule BeamChat.Accounts do
   @doc """
   Clears the ban flag on a user. Tokens are not restored — the user simply
   re-authenticates via password, magic link, OAuth, or SSO. `ban_reason` is cleared.
+
+  Gated on the same `:user_manage` permission as `ban_user/3`.
   """
-  def unban_user(%User{id: user_id}) when is_binary(user_id) do
+  def unban_user(%User{} = actor, %User{} = user) do
+    with :ok <- Authorization.ensure_permission(actor, :user_manage) do
+      do_unban_user(actor, user)
+    end
+  end
+
+  defp do_unban_user(%User{} = actor, %User{id: user_id}) when is_binary(user_id) do
     case Repo.get(User, user_id) do
       nil ->
         {:error, :not_found}
 
       user ->
-        user
-        |> Ecto.Changeset.change(is_banned: false, ban_reason: nil)
-        |> Repo.update()
+        case user |> Ecto.Changeset.change(is_banned: false, ban_reason: nil) |> Repo.update() do
+          {:ok, unbanned} = ok ->
+            {:ok, _} = Moderation.log_user_action(actor, unbanned, "user_unbanned", nil)
+            ok
+
+          {:error, _} = err ->
+            err
+        end
     end
+  end
+
+  @doc """
+  Change a user's global platform role (`"member"` | `"moderator"` | `"admin"`).
+
+  The acting user must hold the `:user_manage` permission (platform
+  admins only). Changing your own platform role is refused: a sole admin
+  demoting themselves can strand the platform without any admin, and
+  there is no higher level to recover from.
+
+  Returns `{:ok, user}` or
+  `{:error, :forbidden | :self_role_change | :invalid_role | changeset}`.
+  """
+  @spec set_global_role(User.t(), User.t(), String.t()) ::
+          {:ok, User.t()}
+          | {:error, :forbidden | :self_role_change | :invalid_role | Ecto.Changeset.t()}
+  def set_global_role(%User{id: actor_id} = actor, %User{id: target_id} = target, role)
+      when role in ~w(member moderator admin) and actor_id != target_id do
+    with :ok <- Authorization.ensure_permission(actor, :user_manage) do
+      target
+      |> Ecto.Changeset.change(role: role)
+      |> Ecto.Changeset.validate_inclusion(:role, ~w(member moderator admin))
+      |> Repo.update()
+      |> case do
+        {:ok, updated} = ok ->
+          {:ok, _} =
+            Moderation.log_user_action(actor, updated, "user_role_changed", nil, %{
+              from: target.role,
+              to: role
+            })
+
+          ok
+
+        {:error, _} = err ->
+          err
+      end
+    end
+  end
+
+  def set_global_role(%User{} = actor, %User{} = target, role)
+      when actor.id == target.id and role in ~w(member moderator admin),
+      do: {:error, :self_role_change}
+
+  def set_global_role(%User{}, %User{}, _role), do: {:error, :invalid_role}
+
+  ## Bootstrap admin (PRD §2.1)
+
+  @doc """
+  Promotes `user` to admin, once, when the deploy-time
+  `BOOTSTRAP_ADMIN_EMAIL` names their email and no admin exists yet.
+
+  This solves the chicken-and-egg problem — the first admin cannot be
+  created through Settings, because Settings requires an admin. Called
+  from the single login chokepoint (`BeamChatWeb.UserAuth.log_in_user/3`),
+  so it covers every auth path: password, magic link, OAuth, and the
+  signed SSO exchange. Once one admin exists, every subsequent admin or
+  moderator is granted through Settings; nobody self-promotes.
+  """
+  @spec maybe_promote_bootstrap_admin(User.t()) :: {:ok, User.t()} | {:error, term()}
+  def maybe_promote_bootstrap_admin(%User{} = user) do
+    expected = bootstrap_admin_email()
+
+    if promotion_matches?(expected, user) and not admin_exists?() do
+      user
+      |> Ecto.Changeset.change(role: "admin")
+      |> Repo.update()
+      |> case do
+        {:ok, promoted} = ok ->
+          {:ok, _} =
+            Moderation.log_user_action(
+              promoted,
+              promoted,
+              "user_bootstrap_promoted",
+              "bootstrap admin email matched",
+              %{"bootstrap" => true}
+            )
+
+          ok
+
+        {:error, _} = err ->
+          err
+      end
+    else
+      {:ok, user}
+    end
+  end
+
+  defp promotion_matches?(expected, %User{email: email})
+       when is_binary(expected) and is_binary(email) do
+    expected != "" and
+      String.downcase(String.trim(expected)) == String.downcase(String.trim(email))
+  end
+
+  defp promotion_matches?(_expected, _user), do: false
+
+  defp bootstrap_admin_email do
+    System.get_env("BOOTSTRAP_ADMIN_EMAIL") ||
+      Application.get_env(:beam_chat, :bootstrap_admin_email, "")
+  end
+
+  @doc "Whether the platform has at least one admin (fresh database check)."
+  @spec admin_exists?() :: boolean()
+  def admin_exists? do
+    from(u in User, where: u.role == "admin", select: 1)
+    |> Repo.exists?()
+  end
+
+  ## Search (admin Settings)
+
+  @doc "Searches users by username, email, or name; paginated, newest first."
+  @spec search_users(keyword()) :: {list(User.t()), boolean()}
+  def search_users(opts \\ []) do
+    query = Keyword.get(opts, :query)
+    role = Keyword.get(opts, :role)
+    banned = Keyword.get(opts, :banned)
+    page = Keyword.get(opts, :page, 1)
+    per_page = Keyword.get(opts, :per_page, 25)
+
+    base = from(u in User, order_by: [desc: u.inserted_at, desc: u.id])
+
+    base =
+      if is_binary(query) and String.trim(query) != "" do
+        pattern = "%#{String.trim(query)}%"
+        where(base, [u], ilike(u.username, ^pattern) or ilike(u.email, ^pattern))
+      else
+        base
+      end
+
+    base =
+      if is_binary(role) and role != "" do
+        where(base, [u], u.role == ^role)
+      else
+        base
+      end
+
+    base =
+      case banned do
+        true -> where(base, [u], u.is_banned == true)
+        false -> where(base, [u], u.is_banned == false)
+        _ -> base
+      end
+
+    from(u in base, limit: ^(per_page + 1), offset: ^((page - 1) * per_page))
+    |> Repo.all()
+    |> then(fn batch -> {Enum.take(batch, per_page), length(batch) > per_page} end)
+  end
+
+  @doc "Total user count (Settings overview chip)."
+  @spec count_users() :: non_neg_integer()
+  def count_users do
+    Repo.aggregate(User, :count, :id)
   end
 
   defp delete_user_tokens(user_id) do

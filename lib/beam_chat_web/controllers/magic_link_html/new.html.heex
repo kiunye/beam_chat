@@ -1,19 +1,30 @@
-<div class="mx-auto w-full max-w-md">
-  <div class="card bg-base-200/30 border border-base-300/80 rounded-box shadow-xl shadow-base-300/10 p-6 sm:p-8">
-    <h1 class="font-display text-2xl font-semibold mb-1">Magic link</h1>
-
-    <p class="text-sm text-base-content/65 mb-6">
-      If the address matches an account, we will email a one-time sign-in link (valid 15 minutes).
-    </p>
+<div class="mx-auto w-full max-w-md pt-6" id="magic-link-page">
+  <div class="card bg-white border border-base-300 shadow-panel rounded-box p-6 sm:p-8">
+    <div class="mb-6 flex items-center gap-2.5">
+      <div class="flex size-10 items-center justify-center rounded-lg bg-primary text-primary-content">
+        <.icon name="hero-envelope" class="size-5" />
+      </div>
+      <div>
+        <h1 class="text-headline-lg">Magic link</h1>
+        <p class="text-sm text-base-content/60">One-time sign-in link, valid 15 minutes.</p>
+      </div>
+    </div>
 
     <%= if @error_message do %>
       <p class="alert alert-error text-sm mb-4" role="alert">{@error_message}</p>
     <% end %>
 
-    <form action={~p"/auth/magic-link"} method="post" class="space-y-4">
+    <form
+      action={~p"/auth/magic-link"}
+      method="post"
+      class="flex flex-col gap-4"
+      id="magic-link-form"
+    >
       <input type="hidden" name="_csrf_token" value={get_csrf_token()} />
       <div class="fieldset">
-        <label class="label" for="user_email"><span class="label-text">Email</span></label>
+        <label class="label" for="user_email">
+          <span class="label-text">Email</span>
+        </label>
         <input
           class="input input-bordered w-full"
           type="email"
@@ -21,13 +32,16 @@
           id="user_email"
           autocomplete="email"
           required
+          placeholder="you@example.com"
         />
       </div>
       <button type="submit" class="btn btn-primary w-full">Send link</button>
     </form>
 
-    <p class="mt-6 text-sm text-center text-base-content/70">
+    <p class="mt-6 text-center text-sm text-base-content/60">
       <a class="link link-hover link-primary" href={~p"/auth/login"}>Back to sign in</a>
+      <span class="mx-2 text-base-300" aria-hidden="true">·</span>
+      <a class="link link-hover link-primary" href={~p"/auth/register"}>Create an account</a>
     </p>
   </div>
 </div>

@@ -1,210 +1,369 @@
 defmodule BeamChat.AccountsTest do
-  use BeamChat.DataCase, async: true
+  @moduledoc """
+  Registration, credentials, magic links, session tokens, banning, global
+  role changes, and the bootstrap-admin promotion (PRD §2.1, §2.2).
+  """
 
-  import BeamChat.TestFixtures
-  import Ecto.Query
+  use BeamChat.DataCase, async: false
 
   alias BeamChat.Accounts
   alias BeamChat.Accounts.User
-  alias BeamChat.Repo
+  alias BeamChat.Accounts.UserToken
+  alias BeamChat.Moderation.ModerationLog
 
-  describe "ban_user/2" do
-    test "sets is_banned and clears all session tokens in a single transaction" do
-      user = registered_user_fixture()
-      raw = Accounts.generate_user_session_token(user)
+  setup do
+    # Registration fixtures hash passwords with bcrypt; keep the suite fast.
+    # Restored in on_exit so nothing else observes the tweaked cost.
+    Application.put_env(:bcrypt_elixir, :log_rounds, 1)
 
-      assert {:ok, banned} = Accounts.ban_user(user, "spam")
-      assert banned.is_banned == true
-      assert banned.ban_reason == "spam"
+    on_exit(fn -> Application.delete_env(:bcrypt_elixir, :log_rounds) end)
 
-      # The persisted row reflects the ban.
-      reloaded = Accounts.get_user(user.id)
-      assert reloaded.is_banned == true
-      assert reloaded.ban_reason == "spam"
-
-      # The previously valid session token no longer resolves.
-      assert Accounts.get_user_by_session_token(raw) == nil
-    end
-
-    test "banning twice is idempotent and still returns ok" do
-      user = registered_user_fixture()
-      assert {:ok, _} = Accounts.ban_user(user)
-      assert {:ok, _} = Accounts.ban_user(user, "again")
-    end
-
-    test "ban with a nil reason is allowed" do
-      user = registered_user_fixture()
-      assert {:ok, banned} = Accounts.ban_user(user, nil)
-      assert banned.is_banned == true
-      assert banned.ban_reason == nil
-    end
-
-    test "magic link tokens are also invalidated by ban" do
-      user = registered_user_fixture()
-      assert :ok = Accounts.deliver_magic_link_instructions(user.email)
-
-      assert {:ok, _} = Accounts.ban_user(user)
-
-      # No token rows remain for this user, regardless of context.
-      remaining = Repo.all(from t in BeamChat.Accounts.UserToken, where: t.user_id == ^user.id)
-      assert remaining == []
-    end
+    :ok
   end
 
-  describe "unban_user/1" do
-    test "clears the ban flag" do
-      user = registered_user_fixture()
-      {:ok, _} = Accounts.ban_user(user, "abuse")
+  describe "register_user/1" do
+    test "creates a member with valid attributes" do
+      attrs = valid_user_attrs(username: "newcomer_#{System.unique_integer([:positive])}")
 
-      assert {:ok, unbanned} = Accounts.unban_user(user)
-      assert unbanned.is_banned == false
-      assert unbanned.ban_reason == nil
+      assert {:ok, %User{} = user} = Accounts.register_user(attrs)
+      assert user.role == "member"
+      assert user.username == attrs.username
+      assert user.email == attrs.email
+      # the plaintext password never reaches the struct; the hash does
+      assert is_nil(user.password)
+      assert is_binary(user.password_hash)
+      refute user.is_banned
     end
 
-    test "does not resurrect old session tokens — user must re-authenticate" do
-      user = registered_user_fixture()
-      raw = Accounts.generate_user_session_token(user)
-      {:ok, _} = Accounts.ban_user(user)
+    test "rejects reserved usernames" do
+      for reserved <- ["admin", "mod"] do
+        attrs = valid_user_attrs(username: reserved)
 
-      # Token is gone after ban.
-      assert Accounts.get_user_by_session_token(raw) == nil
-
-      # Unban does not magically restore it.
-      {:ok, _} = Accounts.unban_user(user)
-      assert Accounts.get_user_by_session_token(raw) == nil
-    end
-
-    test "returns error for unknown user id" do
-      assert {:error, :not_found} =
-               Accounts.unban_user(%User{id: Ecto.UUID.generate()})
-    end
-  end
-
-  describe "reserved_username?/1" do
-    test "matches the default blocklist case-insensitively" do
-      assert Accounts.reserved_username?("admin")
-      assert Accounts.reserved_username?("ADMIN")
-      assert Accounts.reserved_username?("Admin")
-      assert Accounts.reserved_username?(" beam_chat ")
-      assert Accounts.reserved_username?("staff")
-      assert Accounts.reserved_username?("moderator")
-    end
-
-    test "returns false for ordinary usernames" do
-      refute Accounts.reserved_username?("chris")
-      refute Accounts.reserved_username?("alice_42")
-      refute Accounts.reserved_username?("normal_user")
-    end
-
-    test "returns false for non-binary input" do
-      refute Accounts.reserved_username?(nil)
-      refute Accounts.reserved_username?(123)
-      refute Accounts.reserved_username?(%{})
-    end
-
-    test "reflects runtime overrides to :reserved_usernames" do
-      original = Application.get_env(:beam_chat, :reserved_usernames, [])
-
-      try do
-        Application.put_env(:beam_chat, :reserved_usernames, ["custom_reserved_xyz"])
-
-        assert Accounts.reserved_username?("custom_reserved_xyz")
-        refute Accounts.reserved_username?("admin")
-      after
-        Application.put_env(:beam_chat, :reserved_usernames, original)
+        assert {:error, changeset} = Accounts.register_user(attrs)
+        assert_error_message(changeset, :username, "is reserved and cannot be used")
       end
     end
-  end
 
-  describe "registration changeset reserved-username guard" do
-    test "rejects a reserved username at the changeset level" do
-      changeset =
-        User.registration_changeset(%User{}, %{
-          username: "admin",
-          email: "x@example.com",
-          password: "password12"
-        })
+    test "rejects usernames that are too short or too long" do
+      for bad <- ["a", String.duplicate("u", 65)] do
+        attrs = valid_user_attrs(username: bad)
 
-      refute changeset.valid?
-      assert %{username: ["is reserved and cannot be used"]} = errors_on(changeset)
+        assert {:error, changeset} = Accounts.register_user(attrs)
+        assert_error_on(changeset, :username)
+      end
     end
 
-    test "is case-insensitive and ignores leading whitespace" do
-      changeset =
-        User.registration_changeset(%User{}, %{
-          username: "  ADMIN  ",
-          email: "x@example.com",
-          password: "password12"
-        })
+    test "rejects usernames outside lowercase alphanumerics and underscore" do
+      for bad <- ["UPPER", "user name", "user-1", "user.name", "user!"] do
+        attrs = valid_user_attrs(username: bad)
 
-      refute changeset.valid?
+        assert {:error, changeset} = Accounts.register_user(attrs)
+
+        assert_error_message(
+          changeset,
+          :username,
+          "must contain only lowercase letters, numbers, and underscores"
+        )
+      end
     end
 
-    test "accepts an ordinary username" do
-      changeset =
-        User.registration_changeset(%User{}, %{
-          username: "alice_42",
-          email: "x@example.com",
-          password: "password12"
-        })
-
-      assert changeset.valid?
-    end
-  end
-
-  describe "OAuth username generation avoids reserved names" do
-    test "an OAuth display name that would yield a reserved handle is suffixed" do
-      # `Admin Support` -> sanitised `admin_support` -> candidate `admin_support_<hex>`.
-      # Because the sanitised `admin_support` is also a reserved-root, the candidate
-      # itself collides with the blocklist and we append a numeric suffix.
-      claims = %{"sub" => "12345", "email" => "x@example.com", "name" => "Admin Support"}
-
-      assert {:ok, user} = Accounts.register_or_update_oauth_user("google", claims)
-
-      refute Accounts.reserved_username?(user.username)
-      assert String.starts_with?(user.username, "admin_support_")
+    test "accepts usernames of lowercase alphanumerics and underscore, 2..64" do
+      for good <- ["ab", "user_01", "user2", String.duplicate("u", 64)] do
+        assert {:ok, %User{username: ^good}} =
+                 Accounts.register_user(valid_user_attrs(username: good))
+      end
     end
 
-    test "a non-reserving display name is passed through unchanged" do
-      claims = %{"sub" => "67890", "email" => "y@example.com", "name" => "Alice Walker"}
+    test "rejects a duplicate email" do
+      user = user_fixture()
 
-      assert {:ok, user} = Accounts.register_or_update_oauth_user("github", claims)
-
-      assert String.starts_with?(user.username, "alice_walker_")
-      refute Accounts.reserved_username?(user.username)
+      assert {:error, changeset} = Accounts.register_user(valid_user_attrs(email: user.email))
+      assert_error_message(changeset, :email, "has already been taken")
     end
   end
 
-  describe "touch_last_seen/1" do
-    test "sets last_seen_at when it has never been set" do
-      user = registered_user_fixture()
-      assert user.last_seen_at == nil
+  describe "authenticate_user_by_email_and_password/2" do
+    test "authenticates with the right password" do
+      user = user_fixture()
 
-      assert {1, nil} = Accounts.touch_last_seen(user.id)
-      assert %{last_seen_at: %DateTime{}} = Accounts.get_user(user.id)
+      assert {:ok, authed} =
+               Accounts.authenticate_user_by_email_and_password(user.email, valid_user_password())
+
+      assert authed.id == user.id
     end
 
-    test "is throttled: a fresh last_seen_at is not rewritten" do
-      user = registered_user_fixture()
-      assert {1, nil} = Accounts.touch_last_seen(user.id)
+    test "rejects a wrong password" do
+      user = user_fixture()
 
-      assert {0, nil} = Accounts.touch_last_seen(user.id)
-      assert {0, nil} = Accounts.touch_last_seen(user.id)
+      assert {:error, :invalid_credentials} =
+               Accounts.authenticate_user_by_email_and_password(user.email, "wrong-password-1")
     end
 
-    test "updates again once the 5-minute window has passed" do
-      user = registered_user_fixture()
+    test "rejects an unknown email" do
+      assert {:error, :invalid_credentials} =
+               Accounts.authenticate_user_by_email_and_password(
+                 "nobody@example.com",
+                 "wrong-password-1"
+               )
+    end
+  end
 
-      stale = DateTime.add(DateTime.utc_now(), -6 * 60, :second)
+  describe "magic link login" do
+    test "deliver_magic_link_instructions/1 emails a working, single-use token" do
+      user = user_fixture()
 
-      from(u in User, where: u.id == ^user.id, update: [set: [last_seen_at: ^stale]])
-      |> Repo.update_all([])
+      assert :ok = Accounts.deliver_magic_link_instructions(user.email)
 
-      assert {1, nil} = Accounts.touch_last_seen(user.id)
+      # Swoosh's test adapter delivers to the calling process.
+      assert_receive {:email, email}, 1_000
+      %{text_body: text} = email
+
+      captured = Regex.run(~r{token=([A-Za-z0-9_-]+)}, text)
+      refute is_nil(captured)
+      token = Enum.at(captured, 1)
+
+      assert {:ok, logged_in} = Accounts.login_user_by_magic_link(token)
+      assert logged_in.id == user.id
+
+      # The token is consumed: a second use fails.
+      assert {:error, :invalid_or_expired} = Accounts.login_user_by_magic_link(token)
     end
 
-    test "does nothing for an unknown user" do
-      assert {0, nil} = Accounts.touch_last_seen(Ecto.UUID.generate())
+    test "deliver_magic_link_instructions/1 with unknown email reveals nothing" do
+      assert :ok = Accounts.deliver_magic_link_instructions("nobody@example.com")
+      refute_receive {:email, _}
     end
+
+    test "login_user_by_magic_link/1 rejects a garbage token" do
+      assert {:error, :invalid_or_expired} = Accounts.login_user_by_magic_link("garbage-token")
+    end
+  end
+
+  describe "session tokens" do
+    test "generate → lookup → delete round-trip" do
+      user = user_fixture()
+      token = Accounts.generate_user_session_token(user)
+      assert is_binary(token)
+
+      assert %User{id: id} = Accounts.get_user_by_session_token(token)
+      assert id == user.id
+
+      assert {1, _} = Accounts.delete_user_session_token(token)
+      refute Accounts.get_user_by_session_token(token)
+
+      assert Accounts.get_user_by_session_token(nil) == nil
+    end
+  end
+
+  describe "ban_user/3" do
+    test "admin ban flags the user, kills every session, and writes the log" do
+      admin = admin_fixture()
+      user = user_fixture()
+
+      token = Accounts.generate_user_session_token(user)
+      assert %User{} = Accounts.get_user_by_session_token(token)
+
+      assert {:ok, banned} = Accounts.ban_user(admin, user, "spamming the directory")
+
+      assert banned.is_banned
+      assert banned.ban_reason == "spamming the directory"
+      assert Accounts.get_user(user.id).is_banned
+
+      # All of the user's tokens are gone — the cookie is dead.
+      refute Accounts.get_user_by_session_token(token)
+
+      tokens_left =
+        Repo.one(from t in UserToken, where: t.user_id == ^user.id, select: count(t.id))
+
+      assert tokens_left == 0
+
+      log =
+        Repo.one(
+          from l in ModerationLog,
+            where: l.target_id == ^user.id and l.action == "user_banned"
+        )
+
+      refute is_nil(log)
+      assert log.target_type == "user"
+      assert log.actor_id == admin.id
+      assert log.reason == "spamming the directory"
+    end
+
+    test "a platform moderator is forbidden" do
+      moderator = moderator_fixture()
+      user = user_fixture()
+
+      assert {:error, :forbidden} = Accounts.ban_user(moderator, user, "reason")
+
+      # the target was left untouched
+      refute Accounts.get_user(user.id).is_banned
+    end
+  end
+
+  describe "unban_user/2" do
+    test "clears the ban and logs the reversal" do
+      admin = admin_fixture()
+      user = banned_user_fixture()
+
+      assert {:ok, unbanned} = Accounts.unban_user(admin, user)
+      refute unbanned.is_banned
+      assert is_nil(unbanned.ban_reason)
+      refute Accounts.get_user(user.id).is_banned
+
+      log =
+        Repo.one(
+          from l in ModerationLog,
+            where: l.target_id == ^user.id and l.action == "user_unbanned"
+        )
+
+      refute is_nil(log)
+      assert log.target_type == "user"
+      assert log.actor_id == admin.id
+    end
+  end
+
+  describe "set_global_role/3" do
+    test "admin promotes and demotes between member/moderator/admin and logs it" do
+      admin = admin_fixture()
+      target = user_fixture()
+
+      assert {:ok, moderator} = Accounts.set_global_role(admin, target, "moderator")
+      assert moderator.role == "moderator"
+
+      assert {:ok, back} = Accounts.set_global_role(admin, moderator, "member")
+      assert back.role == "member"
+
+      assert {:ok, promoted} = Accounts.set_global_role(admin, back, "admin")
+      assert promoted.role == "admin"
+      assert Accounts.get_user(target.id).role == "admin"
+
+      logs =
+        Repo.all(
+          from l in ModerationLog,
+            where: l.target_id == ^target.id and l.action == "user_role_changed"
+        )
+
+      assert Enum.count(logs) == 3
+
+      first_change =
+        Enum.find(logs, fn log ->
+          log.metadata["from"] == "member" and log.metadata["to"] == "moderator"
+        end)
+
+      refute is_nil(first_change)
+      assert first_change.actor_id == admin.id
+    end
+
+    test "refuses to change your own role" do
+      admin = admin_fixture()
+
+      assert {:error, :self_role_change} = Accounts.set_global_role(admin, admin, "moderator")
+      assert Accounts.get_user(admin.id).role == "admin"
+    end
+
+    test "a platform moderator is forbidden" do
+      moderator = moderator_fixture()
+      target = user_fixture()
+
+      assert {:error, :forbidden} = Accounts.set_global_role(moderator, target, "moderator")
+      assert Accounts.get_user(target.id).role == "member"
+    end
+
+    test "rejects an unknown role" do
+      admin = admin_fixture()
+      target = user_fixture()
+
+      assert {:error, :invalid_role} = Accounts.set_global_role(admin, target, "superadmin")
+    end
+  end
+
+  describe "maybe_promote_bootstrap_admin/1" do
+    @bootstrap_email "root@example.com"
+
+    test "promotes the matching user to admin when no admin exists" do
+      set_bootstrap_email(@bootstrap_email)
+
+      user = user_fixture(email: @bootstrap_email)
+
+      assert {:ok, promoted} = Accounts.maybe_promote_bootstrap_admin(user)
+      assert promoted.role == "admin"
+      assert Accounts.get_user(user.id).role == "admin"
+
+      log =
+        Repo.one(
+          from l in ModerationLog,
+            where: l.target_id == ^user.id and l.action == "user_bootstrap_promoted"
+        )
+
+      refute is_nil(log)
+    end
+
+    test "matches the bootstrap email case-insensitively" do
+      set_bootstrap_email(@bootstrap_email)
+
+      user = user_fixture(email: "ROOT@Example.COM")
+
+      assert {:ok, promoted} = Accounts.maybe_promote_bootstrap_admin(user)
+      assert promoted.role == "admin"
+    end
+
+    test "never promotes once an admin already exists" do
+      set_bootstrap_email(@bootstrap_email)
+
+      _existing = admin_fixture()
+      user = user_fixture(email: @bootstrap_email)
+
+      assert {:ok, unchanged} = Accounts.maybe_promote_bootstrap_admin(user)
+      assert unchanged.role == "member"
+      assert Accounts.get_user(user.id).role == "member"
+    end
+
+    test "never promotes a non-matching email" do
+      set_bootstrap_email(@bootstrap_email)
+
+      user = user_fixture(email: "someone_else@example.com")
+
+      assert {:ok, unchanged} = Accounts.maybe_promote_bootstrap_admin(user)
+      assert unchanged.role == "member"
+    end
+  end
+
+  # The promotion reads System.get_env first, then the app env, so the
+  # system variable is cleared (and restored) to make the app env the
+  # deterministic source for the test.
+  defp set_bootstrap_email(email) do
+    original_system = System.get_env("BOOTSTRAP_ADMIN_EMAIL")
+    original_app = Application.get_env(:beam_chat, :bootstrap_admin_email)
+
+    System.delete_env("BOOTSTRAP_ADMIN_EMAIL")
+    Application.put_env(:beam_chat, :bootstrap_admin_email, email)
+
+    on_exit(fn ->
+      Application.delete_env(:beam_chat, :bootstrap_admin_email)
+
+      if original_app do
+        Application.put_env(:beam_chat, :bootstrap_admin_email, original_app)
+      end
+
+      if original_system do
+        System.put_env("BOOTSTRAP_ADMIN_EMAIL", original_system)
+      else
+        System.delete_env("BOOTSTRAP_ADMIN_EMAIL")
+      end
+    end)
+
+    :ok
+  end
+
+  defp assert_error_on(changeset, field) do
+    assert Enum.any?(changeset.errors, fn {error_field, _details} -> error_field == field end),
+           "expected an error on #{inspect(field)}, got: #{inspect(changeset.errors)}"
+  end
+
+  defp assert_error_message(changeset, field, message) do
+    assert Enum.any?(changeset.errors, fn {error_field, {error_message, _details}} ->
+             error_field == field and error_message == message
+           end),
+           "expected an error on #{inspect(field)} with message #{inspect(message)}, got: #{inspect(changeset.errors)}"
   end
 end

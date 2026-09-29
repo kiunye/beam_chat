@@ -1,8 +1,19 @@
 defmodule BeamChat.Payments.ObanWorkers.MpesaStkWorker do
-  @moduledoc false
+  @moduledoc """
+  Performs the actual Daraja STK push for a pre-created pending
+  transaction and attaches the `CheckoutRequestID` as the transaction's
+  provider reference. Completion is webhook-driven; this worker only
+  initiates the prompt.
+
+  Daraja business errors mark the transaction failed immediately (no
+  retry can fix a rejected shortcode); transport errors retry, and the
+  final attempt marks the transaction failed so it can't leak as
+  "pending" once Oban discards the job.
+  """
 
   use Oban.Worker, queue: :payments, max_attempts: 3
 
+  alias BeamChat.Payments
   alias BeamChat.Payments.MpesaClient
   alias BeamChat.Repo
   alias BeamChat.Wallet
@@ -25,40 +36,39 @@ defmodule BeamChat.Payments.ObanWorkers.MpesaStkWorker do
       true ->
         case run_stk_for_txn(txn, phone) do
           :ok ->
-            # STK push accepted by Daraja. The scheduled MpesaPendingExpiry scan
-            # (SECURITY_REVIEW.md P1 #10) marks this txn "failed" if no webhook
-            # flips it to "completed" within the expiry window.
+            # STK push accepted by Daraja. The pending-topup expiry scan
+            # marks this txn "failed" if no webhook flips it to
+            # "completed" within the expiry window.
             :ok
 
           {:error, reason} when attempt >= max_attempts ->
-            # Last attempt — flip the txn to "failed" so it doesn't leak
-            # as "pending" forever once Oban discards the job.
-            _ = mark_failed(txn, "stk_push_exhausted: #{inspect(reason)}")
+            _ = Wallet.mark_transaction_failed(txn.id, "stk_push_exhausted: #{inspect(reason)}")
             {:error, reason}
 
           {:error, reason} ->
-            # Not the last attempt — let Oban retry.
             {:error, reason}
         end
     end
   end
 
   defp run_stk_for_txn(%WalletTransaction{} = txn, phone) do
-    callback_url = Application.get_env(:beam_chat, :mpesa)[:stk_callback_url]
+    config = Payments.fetch_credentials("mpesa")
+    callback_url = config["stk_callback_url"]
 
     if callback_url in [nil, ""] do
       {:error, :missing_callback_url}
     else
-      do_stk_push(txn, phone, callback_url)
+      do_stk_push(config, txn, phone, callback_url)
     end
   end
 
-  defp do_stk_push(%WalletTransaction{id: txn_id} = txn, phone, callback_url) do
+  defp do_stk_push(config, %WalletTransaction{id: txn_id} = txn, phone, callback_url) do
     account_ref = account_ref(txn_id)
 
-    with {:ok, token} <- MpesaClient.get_access_token(),
+    with {:ok, token} <- MpesaClient.get_access_token(config),
          {:ok, checkout_id} <-
            MpesaClient.stk_push(
+             config,
              token,
              phone,
              txn.amount,
@@ -66,15 +76,15 @@ defmodule BeamChat.Payments.ObanWorkers.MpesaStkWorker do
              "BeamChat wallet",
              callback_url
            ),
-         {:ok, _} <- Wallet.attach_mpesa_checkout_id(txn, checkout_id) do
+         {:ok, _} <- Wallet.attach_provider_reference(txn, checkout_id) do
       :ok
     else
       {:error, {:mpesa_stk, %{"errorMessage" => msg}}} ->
-        _ = mark_failed(txn, msg)
+        _ = Wallet.mark_transaction_failed(txn.id, msg)
         :ok
 
       {:error, {:mpesa_stk, body}} ->
-        _ = mark_failed(txn, inspect(body))
+        _ = Wallet.mark_transaction_failed(txn.id, inspect(body))
         :ok
 
       {:error, reason} ->
@@ -85,24 +95,16 @@ defmodule BeamChat.Payments.ObanWorkers.MpesaStkWorker do
   @doc """
   Builds an M-Pesa `AccountReference` from a wallet transaction UUID.
 
-  We strip hyphens and slice the LAST 18 hex chars, because the tail of the
-  UUID carries the distinguishing entropy: for v4 UUIDs the head holds fixed
-  version/variant bits while the last 12 hex digits are fully random. 18
-  chars is within the legacy Daraja 20-char AccountReference limit and gives
-  ~56+ bits of real entropy, so collision probability is negligible.
+  We strip hyphens and slice the LAST 18 hex chars, because the tail of
+  the UUID carries the distinguishing entropy: for v4 UUIDs the head
+  holds fixed version/variant bits while the last 12 hex digits are
+  fully random. 18 chars is within the legacy Daraja 20-char
+  AccountReference limit and gives ~56+ bits of real entropy, so
+  collision probability is negligible.
   """
   def account_ref(txn_id) when is_binary(txn_id) do
     txn_id
     |> String.replace("-", "")
     |> String.slice(-18, 18)
-  end
-
-  defp mark_failed(%WalletTransaction{} = txn, reason) do
-    txn
-    |> Ecto.Changeset.change(
-      status: "failed",
-      metadata: Map.merge(txn.metadata || %{}, %{"error" => reason})
-    )
-    |> Repo.update()
   end
 end

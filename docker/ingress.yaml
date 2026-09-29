@@ -1,0 +1,14 @@
+# Local development config for the LiveKit Ingress service.
+#
+# The Ingress service provisions and runs external-stream inputs (the
+# `BeamChat.Streaming` radio stations). It talks to the LiveKit server over
+# the container network and picks up work through Redis.
+
+api_key: devkey
+api_secret: secret
+ws_url: ws://livekit:7880
+
+redis:
+  address: redis:6379
+
+log_level: info

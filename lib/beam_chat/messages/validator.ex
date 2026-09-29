@@ -48,7 +48,11 @@ defmodule BeamChat.Messages.Validator do
         with %{room_id: room_id, user_id: user_id} <- msg,
              true <- valid_pipeline_id?(room_id),
              true <- valid_pipeline_id?(user_id) do
-          {:ok, msg}
+          # Normalize the discriminator the same way the :direct branch
+          # does: every validated message carries an explicit `:kind`,
+          # whether or not the caller provided one. Pipeline.insert_flagged_row
+          # and Persister both dispatch on it.
+          {:ok, Map.put(msg, :kind, :room)}
         else
           _ -> {:error, :invalid_message_structure}
         end

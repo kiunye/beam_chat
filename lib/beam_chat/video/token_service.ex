@@ -50,13 +50,16 @@ defmodule BeamChat.Video.TokenService do
   ## Caller responsibility
 
   This service does **not** re-verify `User.is_banned` against the database.
-  The caller (`VideoLive.handle_event/3` for `join_video`) must perform a
+  The caller (`VideoLive.handle_event/3` for join_video) must perform a
   fresh `Repo.get_by(User, id: ..., is_banned: false)` lookup before calling
   `generate_token/3` — see `BeamChatWeb.VideoLive` for the canonical check.
   Rationale: the user struct held in `socket.assigns.current_user` is
   populated at socket-connect time from the cookie and may be stale.
   """
-  @spec generate_token(%{id: Ecto.UUID.t()}, Ecto.UUID.t(), keyword()) ::
+  # The user is specced as a plain map: callers hand us full `User` structs
+  # (or test stand-ins), and Ecto struct fields carry no Dialyzer types, so
+  # a narrower `%{id: Ecto.UUID.t()}` spec is unsatisfiable for structs.
+  @spec generate_token(map(), Ecto.UUID.t(), keyword()) ::
           {:ok, token_payload()} | {:error, :not_configured}
   def generate_token(user, room_id, opts \\ []) do
     case lk_config() do
@@ -107,6 +110,61 @@ defmodule BeamChat.Video.TokenService do
 
       {:error, :not_configured} = err ->
         err
+    end
+  end
+
+  @doc """
+  Generate a **subscribe-only** LiveKit JWT for `user` to listen to
+  `room_name` (e.g. a radio station's `BeamChat.Streaming.livekit_room_name/1`).
+
+  Same conservative defaults as `generate_token/3` (short TTL, identity
+  `"user-" <> user.id`, no PII in claims). The grant denies publishing
+  entirely (`canPublish`/`canPublishData` false) so a listener can never
+  inject media or data into the room — radio rooms are one-way by
+  construction.
+
+  The hex `livekit` package's `Livekit.Grants` struct does not model
+  `canPublish`/`canSubscribe`, so this token is signed directly with
+  `Joken` using LiveKit's documented access-token claim shape.
+  """
+  @spec generate_listener_token(map(), String.t(), keyword()) ::
+          {:ok, token_payload()} | {:error, :not_configured}
+  def generate_listener_token(user, room_name, opts \\ []) do
+    case lk_config() do
+      {:error, :not_configured} = err ->
+        err
+
+      {:ok, %{api_key: api_key, api_secret: api_secret, url: url}} ->
+        ttl = Keyword.get(opts, :ttl, @default_ttl_seconds)
+        now = System.system_time(:second)
+        name = user_name(user)
+
+        claims = %{
+          "iss" => api_key,
+          "sub" => identity(user),
+          "nbf" => now,
+          "exp" => now + ttl,
+          "name" => name,
+          "video" => %{
+            "room" => room_name,
+            "roomJoin" => true,
+            "canPublish" => false,
+            "canSubscribe" => true,
+            "canPublishData" => false
+          }
+        }
+
+        signer = Joken.Signer.create("HS256", api_secret)
+        {:ok, token, _claims} = Joken.encode_and_sign(claims, signer)
+
+        {:ok,
+         %{
+           token: token,
+           url: url,
+           identity: identity(user),
+           name: name,
+           room: room_name
+         }}
     end
   end
 

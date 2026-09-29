@@ -1,67 +1,165 @@
-<a href="#main-content" class="skip-link">Skip to main content</a>
-<div class="min-h-dvh flex flex-col bg-base-100 text-base-content font-sans antialiased">
-  <header class="navbar border-b border-base-300/80 bg-base-100/90 backdrop-blur-md px-4 sm:px-6 lg:px-8 sticky top-0 z-40 min-h-14">
-    <div class="navbar-start flex-1 gap-3">
-      <a href={~p"/"} class="flex w-fit items-center gap-3 group">
-        <span
-          class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-content font-display font-bold text-sm shadow-sm ring-1 ring-base-300/50 group-hover:ring-primary/40 motion-safe:transition-shadow motion-safe:duration-200"
-          aria-hidden="true"
-        >
-          B
-        </span>
-        <span class="flex flex-col leading-tight min-w-0">
-          <span class="font-display font-semibold text-base tracking-tight">Beam Chat</span>
-          <span class="text-xs text-base-content/60 font-normal hidden sm:block">
-            Rooms, DMs, live presence
-          </span>
-        </span>
-      </a>
-    </div>
-
-    <div class="navbar-end flex-none">
-      <div class="flex flex-wrap items-center justify-end gap-1 sm:gap-2">
-        <a href={~p"/"} class="btn btn-ghost btn-sm hidden sm:inline-flex">Home</a>
-        <%= if assigns[:current_user] do %>
-          <.link navigate={~p"/rooms"} class="btn btn-ghost btn-sm hidden sm:inline-flex">
-            Rooms
-          </.link>
-          <.link navigate={~p"/messages"} class="btn btn-ghost btn-sm hidden sm:inline-flex">
-            Messages
-          </.link>
-          <.link navigate={~p"/wallet"} class="btn btn-ghost btn-sm hidden sm:inline-flex">
-            Wallet
-          </.link>
-          <span
-            class="hidden md:inline text-sm text-base-content/70 max-w-[12rem] truncate px-2"
-            title={@current_user.email}
-          >
-            {@current_user.username}
-          </span>
-          <form action={~p"/auth/logout"} method="post" class="inline">
-            <input type="hidden" name="_csrf_token" value={get_csrf_token()} />
-            <button type="submit" class="btn btn-ghost btn-sm">Sign out</button>
-          </form>
-        <% else %>
-          <a href={~p"/auth/login"} class="btn btn-ghost btn-sm">Sign in</a>
-          <a href={~p"/auth/register"} class="btn btn-primary btn-sm">Create account</a>
-        <% end %>
-        <Layouts.theme_toggle />
+<%!-- BeamChat v2 app shell: light sidebar + main canvas.
+     The sidebar navigates the product; the admin section renders only
+     for sessions that pass the platform-role check at render time
+     (routes are also blocked at entry — see the :admin live_session).
+     LiveViews pass :active_nav to highlight the current section;
+     controller-rendered pages (home, auth, payment return) don't, so
+     fall back to nil — no nav item reads as active. --%>
+<% active_nav = assigns[:active_nav] %>
+<div class="grid min-h-dvh lg:grid-cols-[260px_1fr]">
+  <%!-- Sidebar (desktop) --%>
+  <aside class="hidden border-r border-base-300 bg-base-100 lg:flex lg:flex-col">
+    <div class="flex items-center gap-2.5 px-5 pt-6 pb-5">
+      <div class="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-content shadow-sm">
+        <.icon name="hero-bolt" class="size-5" />
+      </div>
+      <div>
+        <div class="text-headline-sm leading-tight">BeamChat</div>
+        <div class="text-label-sm text-base-content/50">v{Layouts.beamchat_version()}</div>
       </div>
     </div>
-  </header>
 
-  <main id="main-content" class="flex-1 w-full outline-none" tabindex="-1">
-    <div class="mx-auto w-full max-w-6xl px-4 sm:px-6 lg:px-8 py-8 sm:py-10">
+    <nav class="flex flex-1 flex-col gap-6 px-3 pb-4" aria-label="Main">
+      <div class="flex flex-col gap-1">
+        <div class="beam-nav-label px-2 pb-1">Explore</div>
+        <Layouts.nav_link
+          to={~p"/rooms"}
+          icon="hero-squares-2x2"
+          label="Rooms"
+          active={active_nav == :rooms}
+        />
+        <Layouts.nav_link
+          to={~p"/radio"}
+          icon="hero-signal"
+          label="Radio"
+          active={active_nav == :radio}
+        />
+      </div>
+
+      <div class="flex flex-col gap-1">
+        <div class="beam-nav-label px-2 pb-1">Account</div>
+        <Layouts.nav_link
+          to={~p"/messages"}
+          icon="hero-chat-bubble-left-right"
+          label="Messages"
+          active={active_nav == :messages}
+        />
+        <Layouts.nav_link
+          to={~p"/wallet"}
+          icon="hero-banknotes"
+          label="Wallet"
+          active={active_nav == :wallet}
+        />
+      </div>
+
+      <%= if BeamChat.Authorization.can?(@current_scope, :settings_access) do %>
+        <div class="flex flex-col gap-1">
+          <div class="beam-nav-label px-2 pb-1">Admin</div>
+          <Layouts.nav_link
+            to={~p"/admin/settings"}
+            icon="hero-cog-6-tooth"
+            label="Settings"
+            active={active_nav == :admin_settings}
+          />
+          <Layouts.nav_link
+            to={~p"/admin/radio"}
+            icon="hero-broadcast-pin"
+            label="Radio console"
+            active={active_nav == :admin_radio}
+          />
+        </div>
+      <% end %>
+    </nav>
+
+    <div class="border-t border-base-300 px-4 py-4">
+      <%= if @current_user do %>
+        <div class="flex items-center gap-3">
+          <div class="flex size-9 shrink-0 items-center justify-center rounded-full bg-secondary text-secondary-content text-sm font-semibold uppercase">
+            {Layouts.initials(@current_user)}
+          </div>
+          <div class="min-w-0 flex-1">
+            <div class="truncate text-headline-sm">{@current_user.username}</div>
+            <div class="text-label-sm text-base-content/50 capitalize">{@current_user.role}</div>
+          </div>
+          <.link
+            href={~p"/auth/logout"}
+            method="delete"
+            data-confirm="Log out?"
+            class="btn btn-ghost btn-sm btn-square"
+            aria-label="Log out"
+          >
+            <.icon name="hero-arrow-right-start-on-rectangle" class="size-4" />
+          </.link>
+        </div>
+      <% else %>
+        <div class="flex items-center gap-2">
+          <.link navigate={~p"/auth/login"} class="btn btn-outline btn-sm flex-1">Sign in</.link>
+          <.link navigate={~p"/auth/register"} class="btn btn-primary btn-sm flex-1">
+            Register
+          </.link>
+        </div>
+      <% end %>
+    </div>
+  </aside>
+
+  <%!-- Main column --%>
+  <div class="flex min-h-dvh flex-col bg-base-100">
+    <%!-- Mobile nav strip --%>
+    <div class="flex items-center gap-1 overflow-x-auto border-b border-base-300 bg-base-100 px-3 py-2 lg:hidden">
+      <div class="mr-2 flex items-center gap-1.5 font-semibold text-primary">
+        <.icon name="hero-bolt" class="size-4" /> BeamChat
+      </div>
+      <Layouts.nav_link
+        to={~p"/rooms"}
+        icon="hero-squares-2x2"
+        label="Rooms"
+        active={active_nav == :rooms}
+        compact
+      />
+      <Layouts.nav_link
+        to={~p"/messages"}
+        icon="hero-chat-bubble-left-right"
+        label="Messages"
+        active={active_nav == :messages}
+        compact
+      />
+      <Layouts.nav_link
+        to={~p"/wallet"}
+        icon="hero-banknotes"
+        label="Wallet"
+        active={active_nav == :wallet}
+        compact
+      />
+      <Layouts.nav_link
+        to={~p"/radio"}
+        icon="hero-signal"
+        label="Radio"
+        active={active_nav == :radio}
+        compact
+      />
+      <%= if BeamChat.Authorization.can?(@current_scope, :settings_access) do %>
+        <Layouts.nav_link
+          to={~p"/admin/settings"}
+          icon="hero-cog-6-tooth"
+          label="Settings"
+          active={active_nav == :admin_settings}
+          compact
+        />
+      <% end %>
+    </div>
+
+    <main class="mx-auto w-full max-w-[1200px] flex-1 px-4 py-6 sm:px-6 lg:px-8">
+      <Layouts.flash_group flash={@flash} />
       {@inner_content}
-    </div>
-  </main>
+    </main>
 
-  <footer class="border-t border-base-300/80 py-6 px-4 sm:px-6 lg:px-8 mt-auto">
-    <div class="mx-auto max-w-6xl flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between text-sm text-base-content/60">
-      <p>© {Date.utc_today().year} Beam Chat</p>
-
-      <p class="text-xs sm:text-sm">Built with Phoenix &amp; LiveView</p>
-    </div>
-  </footer>
-  <Layouts.flash_group flash={@flash} />
+    <footer class="border-t border-base-300 px-6 py-3 text-label-sm text-base-content/40">
+      <div class="mx-auto flex max-w-[1200px] items-center justify-between">
+        <span>BeamChat v{Layouts.beamchat_version()}</span>
+        <span class="beam-chip" data-state="on">
+          <span class="size-1.5 rounded-full bg-primary"></span> Live · Realtime
+        </span>
+      </div>
+    </footer>
+  </div>
 </div>

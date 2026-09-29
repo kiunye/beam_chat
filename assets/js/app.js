@@ -26,6 +26,7 @@ import {hooks as colocatedHooks} from "phoenix-colocated/beam_chat"
 import topbar from "../vendor/topbar.cjs"
 
 import LiveKitRoom from "./hooks/live_kit_room"
+import RadioPlayer from "./hooks/radio_player"
 
 const ChatScroll = {
   mounted() {
@@ -64,7 +65,7 @@ const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, ChatScroll, LiveKitRoom},
+  hooks: {...colocatedHooks, ChatScroll, LiveKitRoom, RadioPlayer},
 })
 
 // Show progress bar on live navigation and form submits

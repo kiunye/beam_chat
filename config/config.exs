@@ -18,12 +18,12 @@ config :beam_chat, Oban,
     Oban.Plugins.Pruner,
     {Oban.Plugins.Cron,
      crontab: [
-       # Flip expired group_subscriptions to "expired" (SECURITY_REVIEW.md P2 #13)
+       # Flip expired room_subscriptions to "expired" (bookkeeping)
        {"0 * * * *", BeamChat.Workers.ExpireSubscriptions},
-       # Keep the ETS moderation rule cache fresh (SECURITY_REVIEW.md P2 #21)
+       # Keep the ETS moderation rule cache fresh
        {"*/5 * * * *", BeamChat.Workers.RefreshModerationCache},
-       # Bound the lifetime of pending M-Pesa top-ups (SECURITY_REVIEW.md P1 #10)
-       {"*/5 * * * *", BeamChat.Payments.ObanWorkers.MpesaPendingExpiry}
+       # Bound the lifetime of pending wallet top-ups, any provider
+       {"*/5 * * * *", BeamChat.Payments.ObanWorkers.PendingTopupExpiry}
      ]}
   ]
 
@@ -70,21 +70,17 @@ config :beam_chat, :reserved_usernames, [
   "all"
 ]
 
-config :beam_chat, :paystack,
-  secret_key: System.get_env("PAYSTACK_SECRET_KEY", ""),
-  public_key: System.get_env("PAYSTACK_PUBLIC_KEY", ""),
-  base_url: System.get_env("PAYSTACK_BASE_URL", "https://api.paystack.co")
+# Payment provider credentials are no longer environment config: they
+# live in the `payment_provider_configs` table, encrypted at rest with
+# the key derived from :config_encryption_key, and are managed from the
+# admin Settings surface (write-only in the UI).
 
-config :beam_chat, :mpesa,
-  consumer_key: System.get_env("MPESA_CONSUMER_KEY", ""),
-  consumer_secret: System.get_env("MPESA_CONSUMER_SECRET", ""),
-  shortcode: System.get_env("MPESA_SHORTCODE", ""),
-  passkey: System.get_env("MPESA_PASSKEY", ""),
-  base_url: System.get_env("MPESA_BASE_URL", "https://sandbox.safaricom.co.ke"),
-  stk_callback_url: System.get_env("MPESA_STK_CALLBACK_URL", ""),
-  # Shared secret embedded in the callback URL path. **Required in prod** —
-  # empty default fails closed. See BeamChatWeb.Plugs.MpesaWebhookAuth.
-  callback_secret: System.get_env("MPESA_CALLBACK_SECRET", "")
+# Passphrase used to derive the AES-256 key that encrypts payment
+# provider credentials at rest. Prod requires CONFIG_ENCRYPTION_KEY
+# (see runtime.exs); the dev default keeps local setups frictionless.
+config :beam_chat,
+  config_encryption_key:
+    System.get_env("CONFIG_ENCRYPTION_KEY", "dev_config_encryption_key_change_me")
 
 config :beam_chat,
   oauth: [
@@ -112,6 +108,17 @@ config :livekit,
   api_secret: System.get_env("LIVEKIT_API_SECRET", "secret"),
   url: System.get_env("LIVEKIT_URL", "ws://localhost:7880")
 
+# Webhook receiver: LiveKit signs each webhook with the same key pair. Must
+# be a map — `Livekit.WebhookReceiver` reads it with Map.get/2.
+config :livekit, :webhook, %{
+  api_key: System.get_env("LIVEKIT_API_KEY", "devkey"),
+  api_secret: System.get_env("LIVEKIT_API_SECRET", "secret")
+}
+
+# Radio streaming: the LiveKit Ingress boundary implementation. Tests swap
+# this for a process-local fake via Application.put_env/3.
+config :beam_chat, :ingress_client, BeamChat.Streaming.LiveKitIngress
+
 config :assent, :http_adapter, Assent.HTTPAdapter.Req
 
 # Configure the endpoint
@@ -124,6 +131,11 @@ config :beam_chat, BeamChatWeb.Endpoint,
   ],
   pubsub_server: BeamChat.PubSub,
   live_view: [signing_salt: "7c9+t9Cl"]
+
+# Phoenix LiveView: colocated JS hooks ship through esbuild, not through the
+# node_modules symlink that Windows refuses to create without elevation. The
+# warning pretends that matters.
+config :phoenix_live_view, :colocated_js, disable_symlink_warning: true
 
 # Configure the mailer
 #

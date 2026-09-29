@@ -1,116 +1,144 @@
-# Beam Chat — design system
+# Beam Chat — Civic Vanguard Design System
 
-Product-led UI: **neutral cool-gray surfaces** with a **cyan primary** accent (replaceable when brand hex arrives). **DaisyUI** supplies components; **Tailwind CSS v4** drives layout and tokens in `assets/css/app.css`.
+## Brand Identity
 
-## Figma → code workflow (MCP)
+A modern, institutional design system for Beacon Chat — clear, data-dense, and mission-critical. Tailored for county-level public administration, inter-departmental operations, and citizen service delivery.
 
-1. Publish **color, radius, and typography variables** in your Figma library (use **modes** for light/dark where possible).
-2. Share the file URL: `https://www.figma.com/design/{fileKey}/...?node-id=...` (convert `node-id` dashes to `:` for MCP tools).
-3. In Cursor, use the **Figma MCP**:
-   - `get_variable_defs` — pull named variables; map names to the DaisyUI `--color-*` and `@theme` entries below.
-   - `get_design_context` — align spacing, type scale, and component anatomy with HEEx + DaisyUI classes.
-4. Update **`assets/css/app.css`** `@plugin "../vendor/daisyui-theme"` blocks (`name: "light"` / `"dark"`) with OKLCH values derived from Figma (keep **contrast** checks below).
+**Tone:** Utilitarian, precise, authoritative without being bureaucratic.
 
-Until a file is linked, the themes in `app.css` are the **source of truth**.
+**Key Colors:**
+- **Primary (Emerald Green):** `#059669` — actions, focus states, verified markers
+- **Secondary (Dark Navy):** `#0f172a` — sidebar rail, navigation, structural elements
+- **Tertiary (Amber):** `#d97706` — alerts, warnings, pending status
 
-## Color palettes (DaisyUI semantic roles)
+## Color Palettes
 
-Tokens are **OKLCH** in `app.css` for perceptual uniformity. Semantic mapping:
+### Light Theme (default)
 
-| Token | Role |
-|--------|------|
-| `base-100` | Page / card background |
-| `base-200` | Subtle panels, sidebars |
-| `base-300` | Borders, dividers |
-| `base-content` | Default text & icons on base |
-| `primary` | **Brand accent** (CTAs, key links, focus ring) |
-| `primary-content` | Text/icons on primary |
-| `secondary` | Muted actions, secondary chrome |
-| `accent` | Highlights (badges, tertiary emphasis) |
-| `neutral` | Strong neutral fills |
-| `info` / `success` / `warning` / `error` | System feedback (alerts, form errors) |
+| Token | Value | Usage |
+|-------|-------|-------|
+| `base-100` | `#f8f9ff` | Page background |
+| `base-200` | `#eff4ff` | Panels, cards |
+| `base-300` | `#d5e3fd` | Borders, dividers |
+| `base-content` | `#0d1c2f` | Primary text |
+| `primary` | `#059669` | Primary buttons, links, CTAs |
+| `primary-content` | `#ffffff` | Text on primary |
+| `secondary` | `#0f172a` | Sidebar rail |
+| `accent` | `#d97706` | Alerts, warnings |
+| `neutral` | `#6b7280` | Muted UI elements |
 
-### Light theme (default)
+### Dark Theme
 
-- Surfaces: high lightness, low chroma (~260° hue) for a **cool neutral** base.
-- **Primary**: ~`oklch(48% 0.14 235)` — cyan-blue; **primary-content** is near-white for contrast on buttons.
-- **base-content** ~`oklch(22% …)` on **base-100** ~`oklch(99% …)` targets **≥ 4.5:1** for body text (WCAG 2.2 **1.4.3 Contrast (Minimum)**).
-
-### Dark theme (`data-theme="dark"` on `<html>`)
-
-- Surfaces: low lightness, similar hue family for consistency.
-- **Primary** is slightly **lighter/more chromatic** than in light mode so CTAs remain visible on dark bases.
-- **base-content** on **base-100** tuned for **≥ 4.5:1** for normal text.
-
-> **Note:** Exact ratios depend on the user agent’s color management. Re-verify in **Firefox Accessibility** or **Chrome DevTools** after token changes.
-
-### Figma variable naming (suggested)
-
-| Figma variable | Maps to |
-|----------------|---------|
-| `color/surface/default` | `base-100` |
-| `color/surface/raised` | `base-200` |
-| `color/border/default` | `base-300` |
-| `color/text/default` | `base-content` |
-| `color/brand/primary` | `primary` |
-| `color/brand/on-primary` | `primary-content` |
-| `color/semantic/*` | `info`, `success`, `warning`, `error` (+ `-content`) |
+| Token | Value | Usage |
+|-------|-------|-------|
+| `base-100` | `#0f172a` | Page background |
+| `base-200` | `#1e293b` | Cards, panels |
+| `base-300` | `#334155` | Borders |
+| `base-content` | `#e2e8f0` | Primary text |
+| `primary` | `#10b981` | Primary buttons (lighter for contrast) |
+| `primary-content` | `#0f172a` | Text on primary |
+| `secondary` | `#0f172a` | Sidebar rail |
+| `accent` | `#fbbf24` | Alerts |
+| `neutral` | `#6b7280` | Disabled UI |
 
 ## Typography
 
-| Role | Font | Tailwind | Usage |
-|------|------|----------|--------|
-| **Display** | [Lexend Deca](https://fonts.google.com/specimen/Lexend+Deca) | `font-display` | Marketing headings, auth titles |
-| **UI / body** | [Lexend Deca](https://fonts.google.com/specimen/Lexend+Deca) | `font-sans` (default on `body`) | Paragraphs, labels, UI chrome |
+| Role | Font | Usage |
+|------|------|-------|
+| **Display** | [Inter](https://fonts.google.com/specimen/Inter) | Page headers |
+| **UI / body** | [Inter](https://fonts.google.com/specimen/Inter) | All other text |
 
-Loaded in `root.html.heex` with `display=swap`. Lexend Deca supports weights **400–700** for hierarchy without extra families.
+Loaded in `root.html.heex` with `display=swap`. Inter supports weights **400–700** for full hierarchy.
 
-### Type scale (recommended)
+### Type Scale
 
-| Level | Approx | Usage |
-|-------|--------|--------|
-| Display | `text-4xl`–`text-5xl` `font-semibold` | Home hero |
-| H1 | `text-2xl` `font-display font-semibold` | Auth pages |
-| Body | `text-base` / `text-lg` | Descriptions |
-| Small | `text-sm` `text-xs` | Meta, footers, hints |
+| Level | Classes | Usage |
+|-------|---------|-------|
+| Display | `text-3xl` `font-bold` | Main headers |
+| H1 | `text-2xl` `font-semibold` | Page titles |
+| Body | `text-base` | Content |
+| Small | `text-sm` `text-xs` | Labels, hints |
 
-## Spacing, radius, depth
+## Spacing
 
-- **Layout**: `max-w-6xl` main column; auth cards `max-w-md` centered.
-- **Radius**: DaisyUI `--radius-field` / `--radius-box` set to **0.5rem / 0.75rem** (softer than default Phoenix starter).
-- **Depth**: `--depth: 0` and subtle **shadows** on cards (`shadow-xl shadow-base-300/10`) for a flat, modern look.
+Base: 8px grid. Layering based on this:
 
-## Interaction states
+- **Base padding:** `p-4` (1rem)
+- **Element spacing:** `gap-2`, `gap-3`, `gap-4` based on content density
+- **Container max-width:** `max-w-6xl` centered (main canvas)
 
-| State | Implementation |
-|--------|----------------|
-| **Hover** | DaisyUI `btn`, `link-hover`, `opacity` on icons |
-| **Focus** | **`:focus-visible`** — `outline: 2px solid var(--color-primary)` + offset (`app.css` `@layer base`) — **WCAG 2.4.7** |
-| **Active** | Default browser + DaisyUI button states |
-| **Disabled** | Use `disabled` on controls; DaisyUI styles `btn-disabled` where applicable |
-| **Error** | `alert-error`, `input-error` / `text-error` from DaisyUI + `CoreComponents` |
+## Layout
 
-## Accessibility (WCAG 2.2 — agreed scope)
+### Multi-Pane Layout Model
 
-- **1.4.3 Contrast (Minimum)** — Aim **AA** for normal text and UI components; re-check when Figma colors land.
-- **2.4.1 Bypass Blocks** — Skip link (`.skip-link`) to `#main-content`.
-- **2.4.7 Focus Visible** — Global `:focus-visible` ring on interactive elements; no removal of outline without replacement.
-- **2.3.3 Animation from Interactions** — `@media (prefers-reduced-motion: reduce)` collapses animations/transitions in `app.css`; LiveView spinners use `motion-safe:animate-spin` where applicable.
+```
+┌─────────────────────────────────────────────┐
+│                  Header                     │
+├──────┬─────────────────────┬───────────────┤
+│Side  │   Main Canvas       │ Inspector     │
+│rail  │                     │ Drawer        │
+│4.5rem│  Fluid 1fr         │ 20-24rem      │
+└──────┴─────────────────────┴───────────────┘
+```
 
-## Theming behavior
+- **Sidebar Rail:** Dark navigation (`w-72`), services, tenant switcher
+- **Main Canvas:** Primary workspace, fluid
+- **Inspector Drawer:** Right-hand panel for details, modal on mobile
 
-- **`data-theme`** on `<html>`: `light`, `dark`, or omitted (**system** — follows OS `prefers-color-scheme` via DaisyUI `prefersdark` on the dark theme block).
-- **Persistence**: `localStorage` key `phx:theme` (`system` clears explicit theme).
+### Responsive
 
-## File map
+- **Desktop:** Full 3-pane
+- **Tablet:** Sidebar → overlay, drawer → modal
+- **Mobile:** Single column, full-width elements
+
+## Components
+
+### Buttons
+
+| Variant | Classes | Usage |
+|---------|---------|-------|
+| Primary | `btn btn-primary` | Main actions |
+| Secondary | `btn btn-secondary` | Dark nav/footer |
+| Outline | `btn btn-outline` | Secondary actions |
+| Ghost | `btn btn-ghost` | Links, minimal |
+
+### Cards
+
+- Border: `border-base-300`
+- Background: `bg-base-100` or `base-200` for subtle panels
+- Shadow: `shadow-sm` on hover
+
+### Message Bubbles
+
+- **Inbound:** `bg-base-200` with `border-primary` left accent
+- **Outbound:** `bg-secondary` with `text-secondary-content`
+
+### Forms
+
+- Input height: `h-auto` min-3rem content area
+- Labels: `text-sm` `font-medium`
+- Error: `text-error` with inline icon
+
+### Tables
+
+- Headers: `bg-base-100` `font-semibold` `uppercase text-xs`
+- Rows: alternating `bg-base-100`/`base-200` on hover
+- Numeric: right-aligned, tabular-nums
+
+## Accessibility
+
+- **1.4.3 Contrast:** ≥ 4.5:1 for body text
+- **2.4.1 Bypass:** Skip link to `#main-content`
+- **2.4.7 Focus:** `focus-visible` ring on interactive
+- **2.3.3 Motion:** `prefers-reduced-motion` media query
+
+## File Map
 
 | Area | Location |
 |------|-----------|
-| Themes & global CSS | `assets/css/app.css` |
+| Themes & CSS | `assets/css/app.css` |
 | Document shell, fonts | `lib/beam_chat_web/components/layouts/root.html.heex` |
-| App chrome (nav, footer, flash host) | `lib/beam_chat_web/components/layouts/app.html.heex` |
-| Flash + theme control | `lib/beam_chat_web/components/layouts.ex` |
-| Primitives & forms | `lib/beam_chat_web/components/core_components.ex` |
-| Marketing home | `lib/beam_chat_web/controllers/page_html/home.html.heex` |
-| Auth surfaces | `lib/beam_chat_web/controllers/*_html/*.html.heex` |
-
+| App chrome (layout) | `lib/beam_chat_web/components/layouts/app.html.heex` |
+| Layout components | `lib/beam_chat_web/components/layouts.ex` |
+| Core components | `lib/beam_chat_web/components/core_components.ex` |
+| Page content | `lib/beam_chat_web/live/*_live.ex` |

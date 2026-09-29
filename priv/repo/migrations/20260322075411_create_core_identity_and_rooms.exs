@@ -1,17 +1,13 @@
 defmodule BeamChat.Repo.Migrations.CreateCoreIdentityAndRooms do
   use Ecto.Migration
 
+  # BeamChat v2 core identity and structure (PRD §3): users (platform
+  # role + ban), the self-referential categories tree, rooms hanging off
+  # tree nodes, room memberships, platform settings, and payment
+  # provider configuration rows. No multi-tenancy: no tenant_id on
+  # anything, no Row Level Security layer.
+
   def change do
-    create table(:room_categories, primary_key: false) do
-      add :id, :binary_id, primary_key: true, default: fragment("gen_random_uuid()")
-      add :name, :text, null: false
-      add :slug, :text, null: false
-
-      timestamps(type: :utc_datetime)
-    end
-
-    create unique_index(:room_categories, [:slug])
-
     create table(:users, primary_key: false) do
       add :id, :binary_id, primary_key: true, default: fragment("gen_random_uuid()")
       add :username, :text, null: false
@@ -63,21 +59,39 @@ defmodule BeamChat.Repo.Migrations.CreateCoreIdentityAndRooms do
 
     create constraint(:users, :users_role_check, check: "role IN ('member','moderator','admin')")
 
+    # The category/subcategory tree: self-referential, arbitrary depth.
+    # Rooms hang off nodes; the tree itself knows nothing about rooms.
+    create table(:categories, primary_key: false) do
+      add :id, :binary_id, primary_key: true, default: fragment("gen_random_uuid()")
+      add :name, :text, null: false
+      add :slug, :text, null: false
+      add :description, :text
+      add :parent_id, references(:categories, type: :binary_id, on_delete: :nilify_all)
+      add :position, :integer, null: false, default: 0
+      add :is_hidden, :boolean, null: false, default: false
+
+      timestamps(type: :utc_datetime)
+    end
+
+    create unique_index(:categories, [:slug])
+    create index(:categories, [:parent_id])
+    create index(:categories, [:parent_id, :position])
+
+    # Rooms: type (public | private | secret | paid), required category,
+    # owner, optional price (paid rooms) and paid-room listing flag.
     create table(:rooms, primary_key: false) do
       add :id, :binary_id, primary_key: true, default: fragment("gen_random_uuid()")
       add :name, :text, null: false
       add :slug, :text, null: false
       add :description, :text
-      add :category_id, references(:room_categories, type: :binary_id, on_delete: :nilify_all)
+      add :category_id, references(:categories, type: :binary_id, on_delete: :nilify_all)
       add :owner_id, references(:users, type: :binary_id, on_delete: :delete_all), null: false
       add :type, :text, null: false, default: "public"
       add :password_hash, :text
       add :is_paid, :boolean, null: false, default: false
+      add :is_listed, :boolean, null: false, default: true
       add :price, :decimal, precision: 12, scale: 2
-      add :currency, :text, default: "KES"
       add :max_members, :integer, default: 500
-      add :age_restriction, :integer
-      add :metadata, :map, null: false, default: fragment("'{}'::jsonb")
       add :is_archived, :boolean, null: false, default: false
 
       timestamps(type: :utc_datetime)
@@ -86,6 +100,7 @@ defmodule BeamChat.Repo.Migrations.CreateCoreIdentityAndRooms do
     create unique_index(:rooms, [:slug])
 
     execute "CREATE INDEX rooms_name_trgm ON rooms USING gin (name gin_trgm_ops)"
+    execute "CREATE INDEX rooms_category_idx ON rooms (category_id)"
 
     create index(:rooms, [:id], name: :rooms_active_idx, where: "is_archived = FALSE")
 
@@ -93,6 +108,12 @@ defmodule BeamChat.Repo.Migrations.CreateCoreIdentityAndRooms do
              check: "type IN ('public','private','secret','paid')"
            )
 
+    create constraint(:rooms, :rooms_paid_price_check,
+             check: "type <> 'paid' OR (price IS NOT NULL AND price > 0)"
+           )
+
+    # Room memberships: room-scoped role layered under the platform role;
+    # optional expires_at for time-boxed grants (read as absent once past).
     create table(:room_members, primary_key: false) do
       add :id, :binary_id, primary_key: true, default: fragment("gen_random_uuid()")
       add :room_id, references(:rooms, type: :binary_id, on_delete: :delete_all), null: false
@@ -100,6 +121,8 @@ defmodule BeamChat.Repo.Migrations.CreateCoreIdentityAndRooms do
       add :role, :text, null: false, default: "member"
       add :joined_at, :utc_datetime, null: false, default: fragment("now()")
       add :expires_at, :utc_datetime
+
+      timestamps(type: :utc_datetime)
     end
 
     create unique_index(:room_members, [:room_id, :user_id])
@@ -113,5 +136,48 @@ defmodule BeamChat.Repo.Migrations.CreateCoreIdentityAndRooms do
     create constraint(:room_members, :room_members_role_check,
              check: "role IN ('member','moderator','owner')"
            )
+
+    # Platform-wide settings: base_currency, room_creation_open.
+    create table(:settings, primary_key: false) do
+      add :key, :text, primary_key: true
+      add :value, :text
+
+      timestamps(type: :utc_datetime)
+    end
+
+    # One row per payment provider: enabled flag plus credentials
+    # encrypted at rest (AES-256-GCM blob), write-only through Settings.
+    create table(:payment_provider_configs, primary_key: false) do
+      add :id, :binary_id, primary_key: true, default: fragment("gen_random_uuid()")
+      add :provider, :text, null: false
+      add :is_enabled, :boolean, null: false, default: false
+      add :credentials, :text
+      add :credentials_set_at, :utc_datetime
+
+      timestamps(type: :utc_datetime)
+    end
+
+    create unique_index(:payment_provider_configs, [:provider])
+
+    create constraint(:payment_provider_configs, :payment_provider_configs_provider_check,
+             check: "provider IN ('paystack','mpesa','stripe')"
+           )
+
+    # Seed the two implemented providers as disabled rows so the Settings
+    # surface always has a stable row per provider to edit.
+    execute """
+    INSERT INTO payment_provider_configs (id, provider, is_enabled, inserted_at, updated_at)
+    VALUES (gen_random_uuid(), 'paystack', FALSE, NOW(), NOW()),
+           (gen_random_uuid(), 'mpesa', FALSE, NOW(), NOW())
+    ON CONFLICT (provider) DO NOTHING;
+    """
+
+    # Default platform settings (PRD §2.4, §2.7).
+    execute """
+    INSERT INTO settings (key, value, inserted_at, updated_at)
+    VALUES ('base_currency', 'KES', NOW(), NOW()),
+           ('room_creation_open', 'true', NOW(), NOW())
+    ON CONFLICT (key) DO NOTHING;
+    """
   end
 end

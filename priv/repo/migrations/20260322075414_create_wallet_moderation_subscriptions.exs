@@ -1,6 +1,10 @@
 defmodule BeamChat.Repo.Migrations.CreateWalletModerationSubscriptions do
   use Ecto.Migration
 
+  # Wallets, the transaction ledger (idempotency by provider_reference),
+  # the moderation rule set + moderation log, and time-boxed
+  # room subscriptions (PRD §3).
+
   def change do
     create table(:wallets, primary_key: false) do
       add :id, :binary_id, primary_key: true, default: fragment("gen_random_uuid()")
@@ -22,7 +26,7 @@ defmodule BeamChat.Repo.Migrations.CreateWalletModerationSubscriptions do
       add :amount, :decimal, precision: 12, scale: 2, null: false
       add :balance_after, :decimal, precision: 12, scale: 2, null: false
       add :description, :text, null: false
-      add :reference, :text
+      add :provider_reference, :text
       add :provider, :text
       add :metadata, :map, null: false, default: fragment("'{}'::jsonb")
       add :status, :text, null: false, default: "pending"
@@ -43,12 +47,14 @@ defmodule BeamChat.Repo.Migrations.CreateWalletModerationSubscriptions do
            )
 
     create constraint(:wallet_transactions, :wallet_transactions_provider_check,
-             check: "provider IS NULL OR provider IN ('mpesa','paystack','internal')"
+             check: "provider IS NULL OR provider IN ('mpesa','paystack','stripe','internal')"
            )
 
-    create unique_index(:wallet_transactions, [:reference],
-             name: :wallet_transactions_reference_unique,
-             where: "reference IS NOT NULL"
+    # The PRD §2.7 idempotency key: a provider reference is unique when
+    # present, so a replayed callback can never double-credit.
+    create unique_index(:wallet_transactions, [:provider_reference],
+             name: :wallet_transactions_provider_reference_unique,
+             where: "provider_reference IS NOT NULL"
            )
 
     create index(:wallet_transactions, [:wallet_id, :inserted_at], name: :wallet_txn_wallet_idx)
@@ -67,8 +73,12 @@ defmodule BeamChat.Repo.Migrations.CreateWalletModerationSubscriptions do
     end
 
     create constraint(:moderation_logs, :moderation_logs_target_type_check,
-             check: "target_type IN ('message','user','room')"
+             check: "target_type IN ('message','user','room','conversation')"
            )
+
+    create index(:moderation_logs, [:target_type, :target_id])
+    create index(:moderation_logs, [:actor_id])
+    create index(:moderation_logs, [:inserted_at])
 
     create table(:moderation_rules, primary_key: false) do
       add :id, :binary_id, primary_key: true, default: fragment("gen_random_uuid()")
@@ -80,11 +90,14 @@ defmodule BeamChat.Repo.Migrations.CreateWalletModerationSubscriptions do
       timestamps(type: :utc_datetime, updated_at: false)
     end
 
+    # PRD §3: word_filter | link_filter | pattern. rate_limit is
+    # deliberately absent — it shipped in the prior build as a schema
+    # entry with no working implementation behind it.
     create constraint(:moderation_rules, :moderation_rules_type_check,
-             check: "type IN ('word_filter','rate_limit','link_filter','pattern')"
+             check: "type IN ('word_filter','link_filter','pattern')"
            )
 
-    create table(:group_subscriptions, primary_key: false) do
+    create table(:room_subscriptions, primary_key: false) do
       add :id, :binary_id, primary_key: true, default: fragment("gen_random_uuid()")
       add :user_id, references(:users, type: :binary_id, on_delete: :delete_all), null: false
       add :room_id, references(:rooms, type: :binary_id, on_delete: :delete_all), null: false
@@ -95,16 +108,18 @@ defmodule BeamChat.Repo.Migrations.CreateWalletModerationSubscriptions do
       add :started_at, :utc_datetime, null: false, default: fragment("now()")
       add :expires_at, :utc_datetime, null: false
       add :status, :text, null: false, default: "active"
+
+      timestamps(type: :utc_datetime)
     end
 
-    create unique_index(:group_subscriptions, [:user_id, :room_id, :started_at])
+    create unique_index(:room_subscriptions, [:user_id, :room_id, :started_at])
 
-    create constraint(:group_subscriptions, :group_subscriptions_status_check,
+    create constraint(:room_subscriptions, :room_subscriptions_status_check,
              check: "status IN ('active','expired','cancelled')"
            )
 
-    create index(:group_subscriptions, [:expires_at],
-             name: :subs_expiry_idx,
+    create index(:room_subscriptions, [:expires_at],
+             name: :room_subscriptions_expiry_idx,
              where: "status = 'active'"
            )
   end

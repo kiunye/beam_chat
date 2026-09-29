@@ -26,12 +26,13 @@ defmodule BeamChat.Repo.Migrations.CreateDirectMessages do
       metadata JSONB NOT NULL DEFAULT '{}',
       is_read BOOLEAN NOT NULL DEFAULT FALSE,
       is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+      moderation_flag TEXT,
       inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (id, inserted_at)
     ) PARTITION BY RANGE (inserted_at);
     """
 
-    for year <- 2025..2027, month <- 1..12 do
+    for year <- 2025..2028, month <- 1..12 do
       from_date = Date.new!(year, month, 1)
 
       to_date =

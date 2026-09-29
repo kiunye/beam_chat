@@ -1,17 +1,25 @@
 defmodule BeamChat.Payments.MpesaClient do
-  @moduledoc false
+  @moduledoc """
+  Daraja (M-Pesa) client: OAuth token fetch + STK push (Req is the app's
+  only HTTP client).
 
-  def get_access_token do
-    cfg = mpesa_config()
-    key = cfg[:consumer_key] || ""
-    secret = cfg[:consumer_secret] || ""
+  Credentials come from the admin-managed `payment_provider_configs` row
+  (`config` is a map with string keys), never from the environment.
+  """
+
+  @default_base_url "https://sandbox.safaricom.co.ke"
+
+  @spec get_access_token(map()) :: {:ok, String.t()} | {:error, term()}
+  def get_access_token(config) do
+    key = config["consumer_key"] || ""
+    secret = config["consumer_secret"] || ""
 
     if key == "" or secret == "" do
       {:error, :missing_config}
     else
       basic = Base.encode64(key <> ":" <> secret)
 
-      case Req.get(oauth_url(),
+      case Req.get(oauth_url(config),
              headers: [{"authorization", "Basic " <> basic}]
            ) do
         {:ok, %{status: 200, body: %{"access_token" => token}}} ->
@@ -26,12 +34,13 @@ defmodule BeamChat.Payments.MpesaClient do
     end
   end
 
-  def stk_push(access_token, phone, amount_kes, account_ref, desc, callback_url) do
-    cfg = mpesa_config()
-    shortcode = cfg[:shortcode] || ""
-    passkey = cfg[:passkey] || ""
+  @spec stk_push(map(), String.t(), String.t(), Decimal.t(), String.t(), String.t(), String.t()) ::
+          {:ok, String.t()} | {:error, term()}
+  def stk_push(config, access_token, phone, amount, account_ref, desc, callback_url) do
+    shortcode = config["shortcode"] || ""
+    passkey = config["passkey"] || ""
 
-    timestamp = timestamp_()
+    timestamp = timestamp()
     password = Base.encode64(shortcode <> passkey <> timestamp)
 
     body = %{
@@ -39,7 +48,7 @@ defmodule BeamChat.Payments.MpesaClient do
       Password: password,
       Timestamp: timestamp,
       TransactionType: "CustomerPayBillOnline",
-      Amount: decimal_major_to_int_string(amount_kes),
+      Amount: decimal_major_to_int_string(amount),
       PartyA: normalize_msisdn(phone),
       PartyB: shortcode,
       PhoneNumber: normalize_msisdn(phone),
@@ -48,7 +57,7 @@ defmodule BeamChat.Payments.MpesaClient do
       TransactionDesc: String.slice(desc, 0, 13)
     }
 
-    case Req.post(stk_url(),
+    case Req.post(stk_url(config),
            json: body,
            headers: [{"authorization", "Bearer " <> access_token}]
          ) do
@@ -67,7 +76,7 @@ defmodule BeamChat.Payments.MpesaClient do
     d |> Decimal.round(0) |> Decimal.to_string(:normal)
   end
 
-  defp normalize_msisdn(phone) do
+  defp normalize_msisdn(phone) when is_binary(phone) do
     digits = String.replace(phone, ~r/\D/, "")
 
     cond do
@@ -85,22 +94,18 @@ defmodule BeamChat.Payments.MpesaClient do
     end
   end
 
-  defp timestamp_ do
+  defp normalize_msisdn(_), do: ""
+
+  defp timestamp do
     {{y, mo, d}, {h, mi, s}} = :calendar.universal_time()
 
     :io_lib.format("~4..0w~2..0w~2..0w~2..0w~2..0w~2..0w", [y, mo, d, h, mi, s])
     |> IO.iodata_to_binary()
   end
 
-  defp oauth_url do
-    base = mpesa_config()[:base_url] || "https://sandbox.safaricom.co.ke"
-    base <> "/oauth/v1/generate?grant_type=client_credentials"
-  end
+  defp oauth_url(config),
+    do: base_url(config) <> "/oauth/v1/generate?grant_type=client_credentials"
 
-  defp stk_url do
-    base = mpesa_config()[:base_url] || "https://sandbox.safaricom.co.ke"
-    base <> "/mpesa/stkpush/v1/processrequest"
-  end
-
-  defp mpesa_config, do: Application.get_env(:beam_chat, :mpesa, [])
+  defp stk_url(config), do: base_url(config) <> "/mpesa/stkpush/v1/processrequest"
+  defp base_url(config), do: config["base_url"] || @default_base_url
 end

@@ -1,4 +1,15 @@
 defmodule BeamChatWeb.ChatLive.Private do
+  @moduledoc """
+  Direct messages: the DM inbox (/messages) and a 1:1 thread view
+  (/messages/:id) for any pair of members.
+
+  The v2 app shell (sidebar + flash group) is provided by the layout —
+  this LiveView renders page content only and marks the Messages nav
+  entry active. Conversation listing is paginated and batch-loaded via
+  `BeamChat.Direct`; threads stream over PubSub with the ChatScroll hook
+  keeping the pane pinned to the newest message.
+  """
+
   use BeamChatWeb, :live_view
 
   alias BeamChat.Accounts.User
@@ -21,10 +32,11 @@ defmodule BeamChatWeb.ChatLive.Private do
   def mount(_params, _session, socket) do
     {:ok,
      socket
+     |> assign(:active_nav, :messages)
      |> assign(:page_title, "Messages")
      |> assign(:conversation, nil)
      |> assign(:other_user, nil)
-     |> assign(:conversation_rows, [])
+     |> assign(:unread_count, 0)
      |> assign(:inbox_meta, %{
        total_count: 0,
        page: 1,
@@ -33,6 +45,7 @@ defmodule BeamChatWeb.ChatLive.Private do
      })
      |> assign(:compose_form, to_form(%{"user_id" => ""}, as: :compose))
      |> assign(:message_form, to_form(%{"content" => ""}, as: :message))
+     |> stream(:conversations, [], reset: true)
      |> stream(:messages, [], reset: true)}
   end
 
@@ -53,21 +66,27 @@ defmodule BeamChatWeb.ChatLive.Private do
 
   defp assign_inbox(socket, params) do
     socket = unsubscribe_if_direct_subscribed(socket)
+    user = socket.assigns.current_user
 
-    result =
-      Direct.list_conversations_for(socket.assigns.current_user, %{
-        page: params["page"]
-      })
+    result = Direct.list_conversations_for(user, %{page: params["page"]})
+
+    rows =
+      Enum.map(result.rows, fn {conv, other, last} ->
+        %{id: conv.id, other_user: other, last_message: last}
+      end)
 
     socket
     |> assign(:page_title, "Direct messages")
-    |> assign(:conversation_rows, result.rows)
+    |> assign(:unread_count, Direct.unread_count(user.id))
     |> assign(:inbox_meta, Map.take(result, [:total_count, :page, :limit, :page_count]))
     |> assign(:conversation, nil)
     |> assign(:other_user, nil)
     |> assign(:topic, nil)
+    |> stream(:conversations, rows, dom_id: &inbox_row_dom_id/1, reset: true)
     |> stream(:messages, [], reset: true)
   end
+
+  defp inbox_row_dom_id(%{id: id}), do: "conv-row-#{id}"
 
   defp assign_thread(socket, id) do
     case Direct.get_conversation(id) do
@@ -103,12 +122,16 @@ defmodule BeamChatWeb.ChatLive.Private do
 
     socket =
       socket
-      |> assign(:page_title, "Chat with #{other && other.username}")
+      |> assign(:page_title, "Chat with " <> sender_label(other))
       |> assign(:conversation, conv)
       |> assign(:other_user, other)
       |> assign(:message_form, message_form)
       |> assign(:topic, Direct.topic(conv.id))
       |> stream(:messages, messages, dom_id: &dm_dom_id/1, reset: true)
+
+    # The thread is being shown — flip the other participant's unread
+    # messages to read so the inbox unread count stays honest.
+    Direct.mark_conversation_read(conv, user.id)
 
     socket =
       if connected?(socket) do
@@ -148,6 +171,13 @@ defmodule BeamChatWeb.ChatLive.Private do
   @impl true
   def handle_info({:new_direct_message, %DirectMessage{} = msg}, socket) do
     if socket.assigns[:conversation] && msg.conversation_id == socket.assigns.conversation.id do
+      # A message from the other participant is being displayed live on
+      # an open thread — mark the thread read so it never shows up as
+      # unread in the inbox afterwards.
+      if msg.sender_id != socket.assigns.current_user.id do
+        Direct.mark_conversation_read(socket.assigns.conversation, socket.assigns.current_user.id)
+      end
+
       {:noreply, stream_insert(socket, :messages, msg)}
     else
       {:noreply, socket}
@@ -160,15 +190,34 @@ defmodule BeamChatWeb.ChatLive.Private do
   def handle_event("open_compose", %{"compose" => %{"user_id" => user_id}}, socket) do
     user_id = String.trim(user_id)
 
-    with true <- user_id != "",
-         other when not is_nil(other) <- Repo.get(User, user_id),
+    # `Ecto.UUID.cast/1` guards the lookup: `Repo.get(User, "not-a-uuid")`
+    # would raise `Ecto.Query.CastError` on a binary_id primary key, so
+    # free-form input must be cast first (same pattern as
+    # `Direct.get_conversation/1`).
+    with {:ok, user_id} <- Ecto.UUID.cast(user_id),
+         %User{} = other <- Repo.get(User, user_id),
          true <- other.id != socket.assigns.current_user.id do
       conv = Direct.get_or_create_conversation!(socket.assigns.current_user, other)
-      {:noreply, push_navigate(socket, to: ~p"/messages/#{conv.id}")}
+
+      {:noreply, push_patch(socket, to: ~p"/messages/#{conv.id}")}
     else
+      :error ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           "That doesn't look like a user id — paste the member's UUID (e.g. from their profile)."
+         )}
+
+      nil ->
+        {:noreply, put_flash(socket, :error, "No member found with that user id.")}
+
+      false ->
+        {:noreply, put_flash(socket, :error, "You can't start a conversation with yourself.")}
+
       _ ->
         {:noreply,
-         put_flash(socket, :error, "Enter another member’s user id (UUID) to start chatting.")}
+         put_flash(socket, :error, "Enter another member's user id (UUID) to start chatting.")}
     end
   end
 
@@ -177,14 +226,32 @@ defmodule BeamChatWeb.ChatLive.Private do
     user = socket.assigns.current_user
 
     case Direct.send_message(conv.id, user.id, content) do
+      {:ok, _row} ->
+        {:noreply, assign(socket, :message_form, to_form(%{"content" => ""}, as: :message))}
+
       {:error, {:blocked, reason}} ->
         {:noreply, put_flash(socket, :error, "Message blocked: #{reason}")}
 
-      {:error, _reason} ->
-        {:noreply, put_flash(socket, :error, "Could not send that message.")}
+      {:error, :banned} ->
+        {:noreply,
+         put_flash(socket, :error, "Your account is banned and can no longer send messages.")}
 
-      {:ok, _row} ->
-        {:noreply, assign(socket, :message_form, to_form(%{"content" => ""}, as: :message))}
+      {:error, :not_participant} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           "You are no longer a participant in this conversation."
+         )}
+
+      {:error, :not_found} ->
+        {:noreply, put_flash(socket, :error, "This conversation no longer exists.")}
+
+      {:error, :empty_content} ->
+        {:noreply, put_flash(socket, :error, "Type a message first.")}
+
+      {:error, _other} ->
+        {:noreply, put_flash(socket, :error, "Could not send that message.")}
     end
   end
 
@@ -193,130 +260,193 @@ defmodule BeamChatWeb.ChatLive.Private do
     ~H"""
     <%= case @live_action do %>
       <% :index -> %>
-        <div class="space-y-6">
-          <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <h1 class="font-display text-2xl font-semibold tracking-tight text-base-content">
-                Direct messages
-              </h1>
-
-              <p class="text-sm text-base-content/70 mt-1">
-                Private 1:1 threads — persisted to your conversations.
+        <div class="space-y-5" id="dm-inbox">
+          <header class="flex flex-wrap items-end justify-between gap-3" id="dm-inbox-header">
+            <div class="space-y-1">
+              <h1 class="text-headline-lg tracking-tight" id="dm-inbox-title">Direct messages</h1>
+              <p class="text-sm text-base-content/60">
+                Private 1:1 conversations, delivered live.
               </p>
             </div>
 
-            <.link navigate={~p"/rooms"} class="btn btn-ghost btn-sm" id="nav-rooms-from-dm">
-              Rooms
-            </.link>
-          </div>
+            <span
+              :if={@unread_count > 0}
+              class="beam-chip"
+              data-state="on"
+              id="dm-unread-chip"
+            >
+              <span class="size-1.5 rounded-full bg-primary" />
+              {@unread_count} unread
+            </span>
+          </header>
 
-          <div class="rounded-box border border-base-300 bg-base-200/30 p-4 space-y-3">
-            <h2 class="text-sm font-semibold text-base-content">Start a conversation</h2>
-
-            <p class="text-xs text-base-content/65">
-              Paste another member’s user id (UUID from profile/admin tools). A richer people picker
-              ships later.
+          <section
+            class="card bg-white border border-base-300 shadow-panel rounded-box p-4 sm:p-5"
+            id="dm-compose"
+          >
+            <h2 class="text-headline-sm flex items-center gap-2">
+              <.icon name="hero-user-plus" class="size-4 text-primary" /> Start a conversation
+            </h2>
+            <p class="mt-1 text-sm text-base-content/60">
+              Paste another member's user id (the UUID from their profile) to open — or reopen — a private thread.
             </p>
 
             <.form
               for={@compose_form}
               id="dm-compose-form"
               phx-submit="open_compose"
-              class="flex flex-col sm:flex-row gap-2 sm:items-end"
+              class="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end"
             >
-              <.input
-                field={@compose_form[:user_id]}
-                type="text"
-                label="User id"
-                placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                class="input input-bordered flex-1 font-mono text-sm"
-              />
-              <button type="submit" class="btn btn-primary btn-sm" id="dm-compose-submit">
-                Open chat
+              <div class="flex-1">
+                <.input
+                  field={@compose_form[:user_id]}
+                  type="text"
+                  label="Member user id"
+                  placeholder="00000000-0000-0000-0000-000000000000"
+                  autocomplete="off"
+                  class="input input-primary w-full font-mono text-sm"
+                />
+              </div>
+              <button type="submit" class="btn btn-primary gap-2 sm:mb-2" id="dm-compose-submit">
+                Open chat <.icon name="hero-paper-airplane" class="size-4" />
               </button>
             </.form>
-          </div>
+          </section>
 
-          <div :if={@conversation_rows == []} class="text-sm text-base-content/60 py-8 text-center">
-            No conversations yet — start one above.
-          </div>
+          <ul class="space-y-2" id="conversation-list" phx-update="stream" role="list">
+            <li id="conversation-list-empty" class="hidden only:block">
+              <div class="card bg-white border border-base-300 shadow-panel rounded-box flex flex-col items-center gap-2 px-6 py-12 text-center">
+                <.icon
+                  name="hero-chat-bubble-left-ellipsis"
+                  class="size-8 text-base-content/30"
+                />
+                <p class="text-headline-sm">No conversations yet</p>
+                <p class="text-sm text-base-content/60">
+                  Start a private thread with the form above.
+                </p>
+              </div>
+            </li>
 
-          <ul :if={@conversation_rows != []} class="space-y-2" id="conversation-list">
-            <li :for={{conv, other, last} <- @conversation_rows} id={"conv-row-" <> conv.id}>
+            <li :for={{cid, row} <- @streams.conversations} id={cid}>
               <.link
-                navigate={~p"/messages/#{conv.id}"}
-                class="block rounded-box border border-base-300 bg-base-100 p-4 hover:border-primary/40 motion-safe:transition-colors"
+                navigate={~p"/messages/#{row.id}"}
+                id={"conv-link-" <> row.id}
+                class="group flex items-center gap-3 rounded-box border border-base-300 bg-white p-4 shadow-panel transition duration-200 hover:border-primary/40 hover:shadow-raised"
               >
-                <div class="flex justify-between gap-2">
-                  <span class="font-medium text-base-content">
-                    {(other && other.username) || "Unknown user"}
-                  </span>
-                  <span :if={last} class="text-xs text-base-content/50">
-                    {Calendar.strftime(last.inserted_at, "%d %b %H:%M")}
-                  </span>
-                </div>
+                <span class="flex size-10 shrink-0 items-center justify-center rounded-full bg-base-200 text-sm font-semibold uppercase text-base-content/70">
+                  {Layouts.initials(row.other_user)}
+                </span>
 
-                <p :if={last} class="text-sm text-base-content/70 truncate mt-1">{last.content}</p>
+                <span class="min-w-0 flex-1">
+                  <span class="flex items-baseline justify-between gap-2">
+                    <span class="truncate font-medium">{sender_label(row.other_user)}</span>
+                    <span
+                      :if={row.last_message}
+                      class="tnum text-label-sm whitespace-nowrap text-base-content/50"
+                    >
+                      {relative_time(row.last_message.inserted_at)}
+                    </span>
+                  </span>
+                  <span class="mt-0.5 block truncate text-sm text-base-content/60">
+                    {last_message_preview(row.last_message, @current_user.id)}
+                  </span>
+                </span>
+
+                <.icon
+                  name="hero-chevron-right"
+                  class="size-4 shrink-0 text-base-content/30 transition group-hover:translate-x-0.5 group-hover:text-primary"
+                />
               </.link>
             </li>
           </ul>
 
           <div
             :if={@inbox_meta.total_count > @inbox_meta.limit}
-            class="flex flex-wrap items-center justify-center gap-3 pt-4 text-sm text-base-content/70"
+            class="flex flex-wrap items-center justify-between gap-3 pt-1"
+            id="dm-inbox-pagination"
           >
-            <span>
+            <p class="text-sm text-base-content/60">
               Page {@inbox_meta.page} of {@inbox_meta.page_count}
-              <span class="text-base-content/50">({@inbox_meta.total_count} conversations)</span>
-            </span>
+              <span class="text-base-content/40">· {@inbox_meta.total_count} conversations</span>
+            </p>
             <div class="flex gap-2">
               <.link
                 :if={@inbox_meta.page > 1}
                 patch={~p"/messages?#{dm_inbox_page_params(@inbox_meta.page - 1)}"}
-                class="btn btn-sm btn-ghost"
+                class="btn btn-outline btn-sm gap-2"
                 id="dm-inbox-prev"
               >
-                Previous
+                <.icon name="hero-chevron-left" class="size-4" /> Previous
               </.link>
               <.link
                 :if={@inbox_meta.page < @inbox_meta.page_count}
                 patch={~p"/messages?#{dm_inbox_page_params(@inbox_meta.page + 1)}"}
-                class="btn btn-sm btn-ghost"
+                class="btn btn-outline btn-sm gap-2"
                 id="dm-inbox-next"
               >
-                Next
+                Next <.icon name="hero-chevron-right" class="size-4" />
               </.link>
             </div>
           </div>
         </div>
       <% :show -> %>
-        <div class="space-y-4" id="dm-thread">
-          <div class="flex flex-wrap items-center gap-2">
-            <.link navigate={~p"/messages"} class="btn btn-ghost btn-sm" id="back-to-inbox">
-              ← Inbox
+        <div class="flex flex-col gap-4" id="dm-thread">
+          <header class="flex flex-wrap items-center gap-3" id="dm-thread-header">
+            <.link navigate={~p"/messages"} class="btn btn-ghost btn-sm gap-2" id="back-to-inbox">
+              <.icon name="hero-arrow-left" class="size-4" /> Inbox
             </.link>
-            <h1 class="font-display text-xl font-semibold">{@other_user && @other_user.username}</h1>
-          </div>
 
-          <section class="rounded-box border border-base-300 bg-base-100 flex flex-col min-h-[24rem]">
+            <span class="flex size-10 shrink-0 items-center justify-center rounded-full bg-base-200 text-sm font-semibold uppercase text-base-content/70">
+              {Layouts.initials(@other_user)}
+            </span>
+
+            <div class="min-w-0">
+              <h1 class="text-headline-md tracking-tight truncate">{sender_label(@other_user)}</h1>
+              <p class="text-label-sm text-base-content/50" id="dm-thread-status">
+                Private conversation · synced live
+              </p>
+            </div>
+          </header>
+
+          <section
+            class="card bg-white border border-base-300 shadow-panel rounded-box flex flex-col min-h-[30rem] overflow-hidden"
+            id="dm-thread-panel"
+          >
             <div
-              id="dm-scroll"
+              class="flex-1 space-y-3 overflow-y-auto scroll-smooth px-4 py-4"
+              id="chat-scroll"
               phx-hook="ChatScroll"
               phx-update="stream"
-              class="flex-1 overflow-y-auto px-4 py-3 space-y-3"
             >
               <div
                 id="dm-messages-empty"
-                class="hidden only:block text-sm text-base-content/60 text-center py-10"
+                class="hidden only:block py-12 text-center text-sm text-base-content/50"
               >
-                No messages yet.
+                No messages yet — say hello.
               </div>
 
-              <div :for={{mid, msg} <- @streams.messages} id={mid} class="text-sm flex gap-2">
-                <span class="w-24 shrink-0 text-xs text-base-content/55 truncate">
-                  {msg.sender && msg.sender.username}
-                </span>
-                <p class="flex-1 whitespace-pre-wrap break-words">{msg.content}</p>
+              <div
+                :for={{mid, msg} <- @streams.messages}
+                id={mid}
+                class={["flex", msg.sender_id == @current_user.id && "justify-end"]}
+              >
+                <div class={[
+                  "flex max-w-[85%] flex-col",
+                  msg.sender_id == @current_user.id && "items-end"
+                ]}>
+                  <div class={[
+                    "whitespace-pre-wrap break-words rounded-2xl px-3.5 py-2 text-sm",
+                    msg.sender_id == @current_user.id &&
+                      "rounded-br-md bg-primary text-primary-content",
+                    msg.sender_id != @current_user.id &&
+                      "rounded-bl-md bg-base-200 text-base-content"
+                  ]}>
+                    {msg.content}
+                  </div>
+                  <span class="tnum text-label-sm mt-1 px-1 text-base-content/40">
+                    {Calendar.strftime(msg.inserted_at, "%H:%M")}
+                  </span>
+                </div>
               </div>
             </div>
 
@@ -324,20 +454,82 @@ defmodule BeamChatWeb.ChatLive.Private do
               for={@message_form}
               id="dm-message-form"
               phx-submit="send_dm"
-              class="border-t border-base-300 p-3 flex gap-2"
+              phx-hook=".DmComposerSubmit"
+              class="flex items-end gap-2 border-t border-base-300 bg-white p-3"
             >
               <.input
                 field={@message_form[:content]}
                 type="textarea"
-                class="textarea textarea-bordered flex-1 min-h-[3rem]"
-                placeholder="Write a direct message…"
+                class="textarea textarea-primary w-full flex-1 min-h-[3.25rem] resize-none"
+                placeholder={"Message " <> sender_label(@other_user)}
                 rows="2"
-              /> <button type="submit" class="btn btn-primary self-end" id="send-dm">Send</button>
+                autocomplete="off"
+              />
+              <button
+                type="submit"
+                class="btn btn-primary mb-2 gap-2 phx-submit-loading:pointer-events-none phx-submit-loading:opacity-60"
+                id="send-dm"
+              >
+                <.icon
+                  name="hero-paper-airplane"
+                  class="size-4 phx-submit-loading:hidden"
+                />
+                <.icon
+                  name="hero-arrow-path"
+                  class="size-4 hidden motion-safe:animate-spin phx-submit-loading:block"
+                /> Send
+              </button>
             </.form>
           </section>
         </div>
+
+        <script :type={Phoenix.LiveView.ColocatedHook} name=".DmComposerSubmit">
+          export default {
+            mounted() {
+              this.el.addEventListener("keydown", (e) => {
+                if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+                  e.preventDefault()
+                  this.el.requestSubmit()
+                }
+              })
+            },
+          }
+        </script>
     <% end %>
     """
+  end
+
+  # Display helpers shared by the inbox rows and the thread header.
+
+  defp sender_label(nil), do: "Unknown user"
+
+  defp sender_label(%{full_name: name}) when is_binary(name) and name != "", do: name
+
+  defp sender_label(%{username: u}), do: "@#{u || "unknown"}"
+
+  # Inbox preview line: prefixes own last messages with "You: " so the
+  # sender is unambiguous at a glance.
+  defp last_message_preview(nil, _current_user_id), do: "No messages yet"
+
+  defp last_message_preview(
+         %DirectMessage{sender_id: sender_id, content: content},
+         current_user_id
+       ) do
+    if sender_id == current_user_id, do: "You: " <> (content || ""), else: content || ""
+  end
+
+  # Compact relative time for inbox rows — stdlib only, recomputed on
+  # every inbox render so it never goes too stale.
+  defp relative_time(%DateTime{} = at) do
+    seconds_ago = DateTime.diff(DateTime.utc_now(), at, :second)
+
+    cond do
+      seconds_ago < 60 -> "just now"
+      seconds_ago < 3600 -> "#{div(seconds_ago, 60)}m ago"
+      seconds_ago < 86_400 -> "#{div(seconds_ago, 3600)}h ago"
+      seconds_ago < 604_800 -> "#{div(seconds_ago, 86_400)}d ago"
+      true -> Calendar.strftime(at, "%d %b")
+    end
   end
 
   defp dm_inbox_page_params(page) when page > 1, do: %{"page" => Integer.to_string(page)}

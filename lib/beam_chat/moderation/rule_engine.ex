@@ -3,22 +3,24 @@ defmodule BeamChat.Moderation.RuleEngine do
   Applies moderation rules to chat messages using an ETS cache.
 
   Runs as a supervised GenServer that owns the named `:moderation_rules`
-  ETS table for the lifetime of the application. Rules are loaded from the
-  `moderation_rules` table at boot and refreshed on demand via
-  `refresh_cache/0` (called by the `BeamChat.Workers.RefreshModerationCache`
-  Oban job). The message hot path never creates or reloads the table.
+  ETS table for the lifetime of the application. Rules are loaded from
+  `moderation_rules` at boot and refreshed on schedule by the
+  `BeamChat.Workers.RefreshModerationCache` Oban job — the refresh is a
+  data update to the stable table, never a rebuild (PRD §4.2).
+
+  Every block/flag result carries the originating rule so the send path
+  can write the matching moderation log entry.
 
   Rule config is normalized at cache-load time: `word_filter` word lists
   are validated and `pattern` regexes are compiled, with invalid entries
   skipped and logged. Boot still fails closed on schema-level database
-  errors — only connection/ownership errors are tolerated (see
-  `load_rules_into_cache/1`'s narrow rescue).
+  errors — only connection/ownership errors are tolerated.
 
   Supported rule types:
-  - word_filter: Blocks messages containing forbidden words
-  - rate_limit: Limits messages per user per time window
-  - link_filter: Blocks or flags messages with URLs
-  - pattern: Blocks messages matching regex patterns
+
+  - `word_filter`: blocks messages containing forbidden words
+  - `link_filter`: blocks or flags messages with (or on) forbidden domains
+  - `pattern`: blocks messages matching regex patterns
   """
 
   use GenServer
@@ -28,10 +30,11 @@ defmodule BeamChat.Moderation.RuleEngine do
   @table :moderation_rules
   @rules_snapshot_key :rules_snapshot
 
+  @url_regex ~r/https?:\/\/[^\s]+/
+
   @type rule :: %{
-          id: Ecto.UUID.t(),
+          id: Ecto.UUID.t() | nil,
           name: String.t(),
-          # "word_filter" | "rate_limit" | "link_filter" | "pattern"
           type: String.t(),
           config: map(),
           is_active: boolean()
@@ -39,19 +42,23 @@ defmodule BeamChat.Moderation.RuleEngine do
 
   @type pipeline_id :: pos_integer() | Ecto.UUID.t()
 
+  # Mirrors BeamChat.Messages.Validator's message shape: the pipeline
+  # feeds both room messages and DMs through apply_rules/1, so the type
+  # must cover both destinations and the `:kind` discriminator the
+  # validator normalizes.
   @type message :: %{
-          room_id: pipeline_id(),
-          user_id: pipeline_id(),
-          content: String.t(),
-          inserted_at: DateTime.t() | nil
+          required(:user_id) => pipeline_id(),
+          required(:content) => String.t(),
+          optional(:kind) => :room | :direct,
+          optional(:room_id) => pipeline_id(),
+          optional(:conversation_id) => pipeline_id(),
+          optional(:inserted_at) => DateTime.t() | nil
         }
 
-  @type apply_rules_result ::
+  @type apply_result ::
           message()
-          | {:blocked, message(), String.t()}
-          | {:flagged, message(), String.t()}
-
-  @url_regex ~r/https?:\/\/[^\s]+/
+          | {:blocked, message(), rule(), String.t()}
+          | {:flagged, message(), rule(), String.t()}
 
   ## GenServer API
 
@@ -79,13 +86,10 @@ defmodule BeamChat.Moderation.RuleEngine do
   @doc """
   Reloads the rules snapshot from the database into the named ETS table.
 
-  Called by the Oban refresh job. The table itself is owned by this
-  supervised GenServer and is never deleted.
-
   The boot-time load is best-effort: if the database is unavailable, the
   process does not crash and this returns `{:error, _}`. The cache stays
-  stale (or empty at boot) until the Oban refresh job repopulates it on the
-  next tick.
+  stale (or empty at boot) until the Oban refresh job repopulates it on
+  the next tick.
   """
   @spec refresh_cache() :: :ok | {:error, term()}
   def refresh_cache do
@@ -128,9 +132,8 @@ defmodule BeamChat.Moderation.RuleEngine do
   # rule clauses below pattern-match atom keys, so normalize the known
   # config keys at cache-load time. Unknown keys are passed through
   # unchanged — no atoms are created from arbitrary data.
-  defp normalize_rule(%{config: config} = rule) when is_map(config) do
-    %{rule | config: normalize_config(config)}
-  end
+  defp normalize_rule(%{config: config} = rule) when is_map(config),
+    do: %{rule | config: normalize_config(config)}
 
   defp normalize_rule(rule), do: rule
 
@@ -140,8 +143,6 @@ defmodule BeamChat.Moderation.RuleEngine do
       {"action", v} -> {:action, v}
       {"domains", v} -> {:domains, v}
       {"patterns", v} -> {:patterns, compile_patterns(v)}
-      {"max_count", v} -> {:max_count, v}
-      {"window_seconds", v} -> {:window_seconds, v}
       {k, v} -> {k, v}
     end)
   end
@@ -189,10 +190,11 @@ defmodule BeamChat.Moderation.RuleEngine do
   Applies the cached moderation rules to a message.
 
   Returns `message` unchanged if no rule matches, `{:blocked, message,
-  reason}` when a rule rejects it, or `{:flagged, message, reason}` when a
-  rule wants it flagged (persist but mark).
+  rule, reason}` when a rule rejects it, or `{:flagged, message, rule,
+  reason}` when a rule wants it flagged (persist but mark). The rule is
+  returned so the send path logs the block/flag with its provenance.
   """
-  @spec apply_rules(message() | map()) :: apply_rules_result()
+  @spec apply_rules(message() | map()) :: apply_result()
   def apply_rules(message) do
     case :ets.whereis(@table) do
       :undefined ->
@@ -218,12 +220,12 @@ defmodule BeamChat.Moderation.RuleEngine do
   defp apply_rule_sequence(rules, message) do
     Enum.reduce(rules, message, fn rule, acc_message ->
       case acc_message do
-        {:blocked, _msg, _reason} ->
-          # Already blocked, keep the block reason
+        {:blocked, _msg, _rule, _reason} ->
+          # Already blocked, keep the first block provenance and reason
           acc_message
 
-        {:flagged, msg, reason} ->
-          merge_flagged_rule_result(safe_apply(rule, msg), reason)
+        {:flagged, msg, first_rule, reason} ->
+          merge_flagged_rule_result(safe_apply(rule, msg), first_rule, reason)
 
         message ->
           # Not yet moderated, apply rule
@@ -242,38 +244,39 @@ defmodule BeamChat.Moderation.RuleEngine do
   rescue
     e in [FunctionClauseError, ArgumentError, Protocol.UndefinedError] ->
       Logger.error(
-        "moderation: rule #{inspect(rule.id || rule.name)} failed: #{Exception.message(e)}; skipping rule"
+        "moderation: rule #{inspect(rule[:id] || rule[:name])} failed: #{Exception.message(e)}; skipping rule"
       )
 
       message
   end
 
-  defp merge_flagged_rule_result({:blocked, msg2, reason2}, _prior), do: {:blocked, msg2, reason2}
+  defp merge_flagged_rule_result({:blocked, msg, rule, reason2}, _prior_rule, _prior),
+    do: {:blocked, msg, rule, reason2}
 
-  defp merge_flagged_rule_result({:flagged, msg2, reason2}, prior),
-    do: {:flagged, msg2, prior <> "; " <> reason2}
+  defp merge_flagged_rule_result({:flagged, msg, rule, reason2}, _prior_rule, prior),
+    do: {:flagged, msg, rule, prior <> "; " <> reason2}
 
-  defp merge_flagged_rule_result(msg2, prior), do: {:flagged, msg2, prior}
+  defp merge_flagged_rule_result(msg, prior_rule, prior),
+    do: {:flagged, msg, prior_rule, prior}
 
   @spec apply_single_rule(rule(), message()) ::
           message()
-          | {:blocked, message(), String.t()}
-          | {:flagged, message(), String.t()}
+          | {:blocked, message(), rule(), String.t()}
+          | {:flagged, message(), rule(), String.t()}
   def apply_single_rule(
         %{
           type: "word_filter",
           config: %{words: forbidden_words}
-        } = _rule,
+        } = rule,
         %{content: content} = message
       ) do
-    # Word filter rule: check for forbidden words
     lower_content = String.downcase(content)
 
     forbidden_word =
       Enum.find(forbidden_words, &word_matches?(&1, lower_content))
 
     if forbidden_word do
-      {:blocked, message, "Contains forbidden word: #{forbidden_word}"}
+      {:blocked, message, rule, "Contains forbidden word: #{forbidden_word}"}
     else
       message
     end
@@ -281,26 +284,11 @@ defmodule BeamChat.Moderation.RuleEngine do
 
   def apply_single_rule(
         %{
-          type: "rate_limit",
-          config: %{max_count: _max_count, window_seconds: _window_seconds}
-        } = _rule,
-        %{user_id: _user_id} = message
-      ) do
-    # Rate limit rule: check if user exceeded message limit
-    # In a full implementation, we would use a sliding window counter
-    # For MVP, we'll use a simple approach with ETS or could use a dedicated counter
-    # For now, we'll allow all messages through (placeholder)
-    message
-  end
-
-  def apply_single_rule(
-        %{
           type: "link_filter",
           config: %{action: action, domains: domains}
-        } = _rule,
+        } = rule,
         %{content: content} = message
       ) do
-    # Link filter rule: check for URLs
     urls = Regex.scan(@url_regex, content)
 
     if Enum.empty?(urls) do
@@ -316,7 +304,7 @@ defmodule BeamChat.Moderation.RuleEngine do
 
       if forbidden_match do
         url = forbidden_match |> List.first() |> url_string()
-        apply_link_action(message, action, url)
+        apply_link_action(message, rule, action, url)
       else
         message
       end
@@ -324,18 +312,14 @@ defmodule BeamChat.Moderation.RuleEngine do
   end
 
   def apply_single_rule(
-        %{
-          type: "pattern",
-          config: %{patterns: patterns}
-        } = _rule,
+        %{type: "pattern", config: %{patterns: patterns}} = rule,
         %{content: content} = message
       ) do
-    # Pattern rule: check against regex patterns
     matched_pattern =
       Enum.find(patterns, &pattern_matches?(&1, content))
 
     if matched_pattern do
-      {:blocked, message, "Matches forbidden pattern: #{pattern_source(matched_pattern)}"}
+      {:blocked, message, rule, "Matches forbidden pattern: #{pattern_source(matched_pattern)}"}
     else
       message
     end
@@ -373,13 +357,13 @@ defmodule BeamChat.Moderation.RuleEngine do
 
   defp word_matches?(_, _), do: false
 
-  defp apply_link_action(message, "block", url),
-    do: {:blocked, message, "Contains forbidden link: #{url}"}
+  defp apply_link_action(message, rule, "block", url),
+    do: {:blocked, message, rule, "Contains forbidden link: #{url}"}
 
-  defp apply_link_action(message, "flag", url),
-    do: {:flagged, message, "Contains link: #{url}"}
+  defp apply_link_action(message, rule, "flag", url),
+    do: {:flagged, message, rule, "Contains link: #{url}"}
 
-  defp apply_link_action(message, _, _), do: message
+  defp apply_link_action(message, _rule, _, _), do: message
 
   defp url_string(u) when is_binary(u), do: u
   defp url_string(_), do: ""

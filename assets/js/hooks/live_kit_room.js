@@ -1,9 +1,13 @@
 // LiveKitRoom hook
 // -----------------------------------------------------------------------------
-// Bridges the LiveKit JS SDK with the `BeamChatWeb.VideoLive` LiveComponent.
-// Listens for `livekit_connect` and `livekit_disconnect` push events from the
-// server, manages a single `Room` instance, and emits state changes back as
+// Bridges the LiveKit JS SDK with the room view's video panel. Listens for
+// `livekit_connect` and `livekit_disconnect` push events from the server,
+// manages a single `Room` instance, and emits state changes back as
 // `video_connected`, `video_disconnected`, and `video_error` events.
+//
+// Server push events are consumed via `this.handleEvent` — the sanctioned
+// hook API. LiveView dispatches `phx:<event>` CustomEvents on `window`, so
+// element-scoped addEventListener would never fire.
 //
 // The hook never logs the JWT. It is held only in the closure used to call
 // `Room.connect`.
@@ -13,16 +17,14 @@ import { Room, RoomEvent, ConnectionState } from "livekit-client"
 const LiveKitRoom = {
   mounted() {
     this.room = null
-    this.handleConnect = (payload) => this.connect(payload)
-    this.handleDisconnect = () => this.disconnect()
 
-    this.el.addEventListener("phx:livekit_connect", (e) => this.handleConnect(e.detail))
-    this.el.addEventListener("phx:livekit_disconnect", () => this.handleDisconnect())
+    this.handleEvent("livekit_connect", (payload) => this.connect(payload))
+    this.handleEvent("livekit_disconnect", () => this.disconnect())
   },
 
   updated() {
     // No-op: state changes flow through push events. `updated` runs after the
-    // server diff; we only need to react to explicit phx:* events.
+    // server diff; we only need to react to explicit server events.
   },
 
   destroyed() {
