@@ -57,8 +57,8 @@ defmodule BeamChat.Accounts.User do
     |> maybe_validate_email()
     |> validate_inclusion(:role, ~w(member moderator admin))
     |> unique_constraint(:username)
-    |> unique_constraint(:email)
-    |> unique_constraint(:phone)
+    |> unique_constraint(:email, name: :users_email_unique)
+    |> unique_constraint(:phone, name: :users_phone_unique)
     |> unique_constraint([:sso_provider, :sso_uid], name: :users_sso_unique)
   end
 
@@ -75,7 +75,7 @@ defmodule BeamChat.Accounts.User do
     |> validate_email_format()
     |> validate_length(:password, min: 8, max: 72)
     |> unique_constraint(:username)
-    |> unique_constraint(:email)
+    |> unique_constraint(:email, name: :users_email_unique)
     |> maybe_hash_password(opts)
   end
 
@@ -97,7 +97,7 @@ defmodule BeamChat.Accounts.User do
     |> validate_username_not_reserved()
     |> maybe_validate_email()
     |> unique_constraint(:username)
-    |> unique_constraint(:email)
+    |> unique_constraint(:email, name: :users_email_unique)
     |> unique_constraint([:sso_provider, :sso_uid], name: :users_sso_unique)
   end
 
@@ -151,7 +151,7 @@ defmodule BeamChat.Accounts.User do
     changeset
     |> validate_required([:email])
     |> validate_format(:email, ~r/^[^\s]+@[^\s]+$/, message: "must be a valid email")
-    |> unique_constraint(:email)
+    |> unique_constraint(:email, name: :users_email_unique)
   end
 
   defp maybe_validate_email(changeset) do

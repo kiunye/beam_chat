@@ -88,15 +88,24 @@ function makeEl(dom) {
 
 function makeHookCtx(el, dom, room) {
   const pushEvents = []
+  const serverEvents = new Map()
   const ctx = {
     el,
     pushEvent: (name, payload) => {
       pushEvents.push({ name, payload })
       return Promise.resolve({})
     },
+    handleEvent: (name, cb) => {
+      serverEvents.set(name, cb)
+    },
+    triggerEvent: (name, payload) => {
+      const cb = serverEvents.get(name)
+      if (cb) cb(payload)
+    },
+    registeredEvents: serverEvents,
     pushEvents,
     room,
-    handleEvent: () => {}
+    dom
   }
   ctx.pushError = function (message) {
     return this.pushEvent("video_error", { message })
@@ -118,11 +127,12 @@ function installHookMethods(ctx, Hook) {
 
 // --- Tests -----------------------------------------------------------------
 
-test("hook registers phx:livekit_connect and phx:livekit_disconnect listeners", () => {
+test("hook registers livekit_connect and livekit_disconnect via handleEvent", async () => {
   const dom = new JSDOM("<!doctype html><html><body><div id=hook></div></body></html>")
   const el = dom.window.document.getElementById("hook")
+  const stubRoom = makeStubRoom()
   dom.window.__LK_STUB__ = {
-    Room: function () {},
+    Room: () => stubRoom,
     RoomEvent: { ParticipantConnected: "pc", ParticipantDisconnected: "pd", Disconnected: "d", ConnectionStateChanged: "csc" },
     ConnectionState: { Disconnected: "disconnected" }
   }
@@ -131,16 +141,19 @@ test("hook registers phx:livekit_connect and phx:livekit_disconnect listeners", 
   const ctx = installHookMethods(makeHookCtx(el, dom, null), Hook)
   Hook.mounted.call(ctx)
 
-  let called = false
-  ctx.handleConnect = (payload) => { called = true; assert.equal(payload.token, "abc") }
+  assert.ok(ctx.registeredEvents.has("livekit_connect"), "expected a livekit_connect handler")
+  assert.ok(ctx.registeredEvents.has("livekit_disconnect"), "expected a livekit_disconnect handler")
 
-  el.dispatchEvent(new dom.window.CustomEvent("phx:livekit_connect", { detail: { token: "abc", url: "wss://x" } }))
-  assert.equal(called, true, "expected handleConnect to fire on phx:livekit_connect")
+  // Driving the registered connect handler must reach this hook's connect.
+  ctx.triggerEvent("livekit_connect", { token: "abc", url: "wss://x" })
+  await new Promise((resolve) => setTimeout(resolve, 0))
 
-  let disconnectCalled = false
-  ctx.handleDisconnect = () => { disconnectCalled = true }
-  el.dispatchEvent(new dom.window.CustomEvent("phx:livekit_disconnect", { detail: {} }))
-  assert.equal(disconnectCalled, true, "expected handleDisconnect to fire on phx:livekit_disconnect")
+  assert.equal(stubRoom.connectCalls.length, 1, "expected the handler to connect the room")
+  assert.equal(stubRoom.connectCalls[0].token, "abc")
+
+  // Driving disconnect must tear the room down.
+  ctx.triggerEvent("livekit_disconnect", {})
+  assert.equal(stubRoom.disconnectCalls, 1, "expected the handler to disconnect the room")
 })
 
 test("hook pushes video_error when token/url is missing", async () => {

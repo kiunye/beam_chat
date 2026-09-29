@@ -1,135 +1,54 @@
 defmodule BeamChat.Authorization.Roles do
   @moduledoc """
-  Static catalogue mapping roles to permission atoms.
+  Static platform role → permission catalogue.
 
-  Permissions are the vocabulary; roles are the bundles. Callers ask
-  `BeamChat.Authorization.can?/2` for a permission and never match on role
-  names, so adding a capability means changing this module only.
+  Two role layers exist and they compose (PRD §2.1):
 
-  Roles exist at three levels today, and they compose by union — a user
-  holds the permissions of their global role plus those of their role in
-  the active tenant, and room-level permissions additionally apply when a
-  check passes a room context (see `BeamChat.Authorization.can?/3`):
+  - **Platform role** (`users.role`): `member`, `moderator`, `admin`. Global.
+  - **Room role** (`room_members.role`): `member`, `moderator`, `owner`.
+    Room-scoped, layered under the platform role, and resolved per check by
+    `BeamChat.Authorization.can?/3`.
 
-    * global (`users.role`) — platform-wide staff powers
-    * tenant (`tenant_members.role`) — per-tenant administration
-    * room (`room_members.role`) — powers inside one room, resolved
-      per-check against the room in question
-
-  ## Permission vocabulary
-
-    * `:moderation_configure` — manage moderation rules
-    * `:radio_manage`         — create, edit, start, and stop radio stations
-    * `:room_create`          — create rooms in a tenant
-    * `:room_update`          — edit room settings
-    * `:room_delete`          — delete rooms
-    * `:room_manage_members`  — grant/revoke room membership and roles
-    * `:room_message_delete`  — delete messages in a room
-    * `:tenant_manage`        — manage tenant members and their roles
-    * `:user_ban`             — ban or unban platform users
-    * `:user_manage_roles`    — change a user's global role
-    * `:wallet_credit`        — manually credit a user's wallet
-
-  `:room_message_delete` is room-scoped: it is granted by the room
-  roles below (and to tenant admins inside their tenant), never by global
-  roles alone — platform staff fight abuse through the moderation rule
-  engine instead of per-room message surgery.
-
-  The catalogue is deliberately static in-code. A database-driven
-  catalogue (roles/role_permissions tables with a cache) is a known
-  extension path, but only worth its complexity once roles must be
-  configurable at runtime; until then a compile-time map keeps the
-  permission graph greppable and testable.
+  There is deliberately no per-category or per-node override of the
+  platform role.
   """
 
-  @global_permissions %{
-    "admin" => [
-      :moderation_configure,
-      :radio_manage,
-      :room_create,
-      :room_delete,
-      :room_manage_members,
-      :room_update,
-      :tenant_manage,
-      :user_ban,
-      :user_manage_roles,
-      :wallet_credit
-    ],
-    "moderator" => [:moderation_configure, :user_ban],
-    "member" => []
-  }
+  @typedoc "A permission atom, e.g. `:settings_access`."
+  @type permission :: atom()
 
-  @tenant_permissions %{
-    "admin" => [
-      :radio_manage,
-      :room_create,
-      :room_delete,
-      :room_manage_members,
-      :room_message_delete,
-      :room_update,
-      :tenant_manage
-    ],
-    "member" => []
-  }
-
-  @room_permissions %{
-    "owner" => [
-      :room_delete,
-      :room_manage_members,
-      :room_message_delete,
-      :room_update
-    ],
-    "moderator" => [
-      :room_manage_members,
-      :room_message_delete,
-      :room_update
-    ],
-    "member" => []
-  }
-
-  @type permission ::
-          :moderation_configure
-          | :radio_manage
-          | :room_create
-          | :room_delete
-          | :room_manage_members
-          | :room_message_delete
-          | :room_update
-          | :tenant_manage
-          | :user_ban
-          | :user_manage_roles
-          | :wallet_credit
-
-  @doc "Permissions held by a global role. Unknown roles hold nothing."
+  @doc "All permissions a platform role grants, ignoring room context."
   @spec global_permissions(String.t() | nil) :: [permission()]
-  def global_permissions(role) when is_binary(role),
-    do: Map.get(@global_permissions, role, [])
 
-  def global_permissions(nil), do: []
-
-  @doc "Permissions held by a tenant role. Unknown or absent roles hold nothing."
-  @spec tenant_permissions(String.t() | nil) :: [permission()]
-  def tenant_permissions(role) when is_binary(role),
-    do: Map.get(@tenant_permissions, role, [])
-
-  def tenant_permissions(nil), do: []
-
-  @doc "Permissions held by a room role. Unknown or absent roles hold nothing."
-  @spec room_permissions(String.t() | nil) :: [permission()]
-  def room_permissions(role) when is_binary(role),
-    do: Map.get(@room_permissions, role, [])
-
-  def room_permissions(nil), do: []
-
-  @doc "Every permission any role can hold, for documentation and tests."
-  @spec all_permissions() :: [permission()]
-  def all_permissions do
-    global = List.flatten(Map.values(@global_permissions))
-    tenant = List.flatten(Map.values(@tenant_permissions))
-    room = List.flatten(Map.values(@room_permissions))
-
-    (global ++ tenant ++ room)
-    |> Enum.uniq()
-    |> Enum.sort()
+  def global_permissions("admin") do
+    ~w(settings_access user_manage payments_configure structure_manage
+       moderation_configure wallet_credit radio_manage room_create
+       room_manage room_moderate member_manage message_delete)a
   end
+
+  # A platform moderator acts on content in every room but can never reach
+  # Settings: user management, payment configuration, and the
+  # category/room structure are admin-only (PRD §2.1).
+  def global_permissions("moderator") do
+    ~w(room_create room_moderate member_manage message_delete)a
+  end
+
+  def global_permissions("member"), do: []
+
+  def global_permissions(_), do: []
+
+  @doc """
+  Permissions a room role adds on top of the actor's platform permissions,
+  scoped to that one room.
+
+  A room `owner` manages their room (metadata, membership, moderation).
+  A room `moderator` has content-moderation powers in that room only.
+  """
+  @spec room_role_permissions(String.t() | nil) :: [permission()]
+
+  def room_role_permissions("owner") do
+    ~w(room_manage member_manage room_moderate message_delete)a
+  end
+
+  def room_role_permissions("moderator"), do: ~w(room_moderate message_delete)a
+  def room_role_permissions(_), do: []
 end

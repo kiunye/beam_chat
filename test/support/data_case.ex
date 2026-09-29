@@ -1,10 +1,16 @@
 defmodule BeamChat.DataCase do
   @moduledoc """
-  Test helper that sets up the data layer for tests and enables the SQL
-  sandbox so database changes are reverted after each test. Helpers defined
-  here can be reused across test cases.
-  by setting `use BeamChat.DataCase, async: true`, although
-  this option is not recommended for other databases.
+  Defines the setup for tests requiring access to the
+  application's data layer.
+
+  You may define functions here to be used as helpers in your tests.
+
+  Finally, if the test case interacts with the database, we enable the SQL
+  sandbox so that changes done to the database are reverted at the end of
+  every test. If you are using PostgreSQL, you can even run database tests
+  asynchronously by setting `use BeamChat.DataCase, async: true`, although
+  it must be explicitly enabled in `test/test_helper.exs` by setting
+  `Ecto.Adapters.SQL.Sandbox.mode/2`.
   """
 
   use ExUnit.CaseTemplate
@@ -14,11 +20,16 @@ defmodule BeamChat.DataCase do
   using do
     quote do
       alias BeamChat.Repo
+      alias Ecto.Adapters.SQL.Sandbox
 
       import Ecto
       import Ecto.Changeset
       import Ecto.Query
       import BeamChat.DataCase
+      import BeamChat.TestFixtures
+
+      # Default to the ETS cache owner being fresh: moderation tests that
+      # need specific rules load them explicitly.
     end
   end
 
@@ -36,18 +47,19 @@ defmodule BeamChat.DataCase do
   end
 
   @doc """
-  A helper that transforms changeset errors into a map of messages.
-
-      assert {:error, changeset} = Accounts.create_user(%{password: "short"})
-      assert "password is too short" in errors_on(changeset).password
-      assert %{password: ["password is too short"]} = errors_on(changeset)
-
+  Helper for testing moderation blocks/flags through the real rule
+  engine: registers the given rules in the DB and refreshes the ETS
+  cache. The DB writes happen inside the caller's sandbox. Returns the
+  created rules.
   """
-  def errors_on(changeset) do
-    Ecto.Changeset.traverse_errors(changeset, fn {message, opts} ->
-      Regex.replace(~r"%{(\w+)}", message, fn _, key ->
-        opts |> Keyword.get(String.to_existing_atom(key), key) |> to_string()
+  def load_moderation_rules(rules) do
+    created =
+      Enum.map(rules, fn attrs ->
+        {:ok, rule} = BeamChat.Moderation.create_rule(attrs)
+        rule
       end)
-    end)
+
+    :ok = BeamChat.Moderation.refresh_rule_cache()
+    created
   end
 end

@@ -1,473 +1,412 @@
-# Seed data for every Beam Chat feature.
+# BeamChat v2 development seeds.
 #
-# Run with:
+# Idempotent: every record is get-or-create, so `mix ecto.reset` can run
+# seeds repeatedly. Seeds assume the app tree is up (Oban, PubSub, the
+# moderation ETS cache owner) because `mix run` boots the application.
 #
-#     mix run priv/repo/seeds.exs
-#
-# (or `mix ecto.setup` / `mix ecto.reset` from scratch)
-#
-# The seeds are idempotent — every entity is get-or-create keyed on its
-# natural unique key (email, slug, reference) — so the script is safe to
-# re-run.
-#
-# Seeding prefers the real context functions (`Accounts`, `Rooms`,
-# `Wallet`, `Streaming`, `Tenants`, `Direct`) over raw inserts wherever a
-# privileged action exists, so permission gates, audits, and RLS-wrapped
-# writes all behave exactly as they do in production. Raw inserts are used
-# only where no context function exists (room categories, extra room
-# memberships) and are wrapped in `Repo.with_tenant/3` for RLS.
-
-import Ecto.Query
+# Per AGENTS.md: import Ecto.Query here, always.
 
 alias BeamChat.Accounts
+alias BeamChat.Accounts.User
+alias BeamChat.Categories
 alias BeamChat.Direct
 alias BeamChat.Moderation
+alias BeamChat.Payments
 alias BeamChat.Repo
 alias BeamChat.Rooms
-alias BeamChat.Rooms.RoomCategory
-alias BeamChat.Rooms.RoomMember
+alias BeamChat.Settings
 alias BeamChat.Streaming
-alias BeamChat.Tenants
 alias BeamChat.Wallet
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 defmodule Seeds do
-  @password "radiobeam123"
-
-  def password, do: @password
-
-  def get_or_create_user(username, email, role, full_name) do
+  def get_or_create_user(attrs) do
     user =
-      case Accounts.get_user_by_email(email) do
+      case Repo.get_by(User, username: attrs.username) do
+        %User{} = existing ->
+          existing
+
         nil ->
-          {:ok, user} =
-            Accounts.register_user(%{
-              username: username,
-              email: email,
-              password: @password
-            })
-
-          user
-
-        user ->
+          {:ok, user} = Accounts.register_user(attrs)
           user
       end
 
-    # Registration only creates plain members, so reconcile the staff role
-    # and display names on every run (idempotent, safe to re-run).
-    first = first_name(full_name)
-    last = last_name(full_name)
+    # Registration deliberately never accepts a platform role (it is a
+    # programmatic field); seeds set it directly on the record.
+    role = Map.get(attrs, :role)
 
-    if {user.role, user.first_name, user.last_name} != {role, first, last} do
+    if role != nil and user.role != role do
+      {:ok, user} = Repo.update(Ecto.Changeset.change(user, role: role))
       user
-      |> Ecto.Changeset.change(role: role, first_name: first, last_name: last)
-      |> Repo.update!()
     else
       user
     end
   end
 
-  defp first_name(full), do: full |> String.split(" ") |> List.first()
-  defp last_name(full), do: full |> String.split(" ") |> Enum.drop(1) |> Enum.join(" ")
+  def get_or_create_category(attrs) do
+    case Repo.get_by(BeamChat.Categories.Category, slug: attrs.slug) do
+      %BeamChat.Categories.Category{} = existing ->
+        existing
 
-  def get_or_create_tenant(name, slug) do
-    case Tenants.get_tenant_by_slug(slug) do
       nil ->
-        {:ok, tenant} = Tenants.create_tenant(%{name: name, slug: slug})
-        tenant
-
-      tenant ->
-        tenant
+        {:ok, category} = Categories.create_category(attrs)
+        category
     end
   end
 
-  def get_or_create_membership(tenant, user, role) do
-    case Tenants.member_role(tenant, user) do
-      nil -> {:ok, _} = Tenants.add_member(tenant, user, role)
-      _existing -> :ok
-    end
-  end
+  def get_or_create_room(owner, attrs) do
+    case Repo.get_by(BeamChat.Rooms.Room, slug: attrs.slug) do
+      %BeamChat.Rooms.Room{} = existing ->
+        existing
 
-  def get_or_create_station(admin, tenant, slug, attrs) do
-    case Streaming.get_station_by_slug(admin, tenant.id, slug) do
       nil ->
-        {:ok, station} = Streaming.create_station(admin, tenant, attrs)
-        station
+        {:ok, room} = Rooms.create_room(owner, attrs)
+        room
+    end
+  end
 
-      station ->
+  def ensure_member(room, user, role) do
+    unless Rooms.room_member?(room.id, user.id) do
+      {:ok, _} =
+        Repo.insert(
+          BeamChat.Rooms.RoomMember.changeset(%BeamChat.Rooms.RoomMember{}, %{
+            room_id: room.id,
+            user_id: user.id,
+            role: role,
+            joined_at: DateTime.utc_now()
+          })
+        )
+    end
+  end
+
+  def ensure_rule(attrs) do
+    case Repo.get_by(BeamChat.Moderation.ModerationRule, name: attrs.name) do
+      %BeamChat.Moderation.ModerationRule{} = existing ->
+        existing
+
+      nil ->
+        {:ok, rule} = Moderation.create_rule(attrs)
+        rule
+    end
+  end
+
+  def ensure_station(attrs) do
+    case Repo.get_by(BeamChat.Streaming.RadioStation, slug: attrs.slug) do
+      %BeamChat.Streaming.RadioStation{} = existing ->
+        existing
+
+      nil ->
+        {:ok, station} = Streaming.create_station(seeds_admin(), attrs)
         station
     end
   end
 
-  def add_room_member(room, user, role) do
-    # Both the membership check and the insert must run under the tenant
-    # GUCs — an unscoped `room_member?` reads RLS-deny and would duplicate.
-    Repo.with_tenant(room.tenant_id, user.id, fn ->
-      unless Rooms.room_member?(room.id, user.id) do
-        %RoomMember{}
-        |> RoomMember.changeset(%{
-          room_id: room.id,
-          user_id: user.id,
-          tenant_id: room.tenant_id,
-          role: role,
-          joined_at: DateTime.utc_now(:second)
-        })
-        |> Repo.insert!()
-      end
-    end)
-  end
-
-  def add_room_message(tenant, room, sender, content) do
-    Repo.with_tenant(tenant.id, sender.id, fn ->
-      {:ok, _} = Rooms.send_message(room.id, sender.id, content)
-      :ok
-    end)
+  def seeds_admin do
+    Repo.get_by!(User, username: "ada")
   end
 end
 
-# ---------------------------------------------------------------------------
-# Tenants
-# ---------------------------------------------------------------------------
+# --- Users -------------------------------------------------------------------
+# Password for every seeded account: radiobeam123
 
-nairobi = Seeds.get_or_create_tenant("Nairobi County", "nairobi")
-mombasa = Seeds.get_or_create_tenant("Mombasa County", "mombasa")
+IO.puts("Seeding users…")
 
-# ---------------------------------------------------------------------------
-# Users (password: radiobeam123)
-# ---------------------------------------------------------------------------
+admin =
+  Seeds.get_or_create_user(%{
+    username: "ada",
+    email: "ada@beamchat.dev",
+    password: "radiobeam123",
+    role: "admin",
+    first_name: "Ada",
+    last_name: "Admin"
+  })
 
-platform_admin =
-  Seeds.get_or_create_user("platform_admin", "admin@beamchat.dev", "admin", "Amina Baraka")
+moderator =
+  Seeds.get_or_create_user(%{
+    username: "moe",
+    email: "moe@beamchat.dev",
+    password: "radiobeam123",
+    role: "moderator",
+    first_name: "Moe",
+    last_name: "Moderator"
+  })
 
-_moderator =
-  Seeds.get_or_create_user(
-    "chat_moderator",
-    "moderator@beamchat.dev",
-    "moderator",
-    "Mwangi Kariuki"
-  )
+wanjiku =
+  Seeds.get_or_create_user(%{
+    username: "wanjiku",
+    email: "wanjiku@beamchat.dev",
+    password: "radiobeam123",
+    first_name: "Wanjiku",
+    last_name: "Kamau"
+  })
 
-nairobi_admin =
-  Seeds.get_or_create_user(
-    "nairobi_admin",
-    "nairobi.admin@beamchat.dev",
-    "member",
-    "Wangui Njeri"
-  )
+otieno =
+  Seeds.get_or_create_user(%{
+    username: "otieno",
+    email: "otieno@beamchat.dev",
+    password: "radiobeam123",
+    first_name: "Otieno",
+    last_name: "Ochieng"
+  })
 
-wangui = nairobi_admin
-otieno = Seeds.get_or_create_user("otieno", "otieno@beamchat.dev", "member", "Otieno Odhiambo")
-aisha = Seeds.get_or_create_user("aisha", "aisha@beamchat.dev", "member", "Aisha Hassan")
-
-mombasa_admin =
-  Seeds.get_or_create_user(
-    "mombasa_admin",
-    "mombasa.admin@beamchat.dev",
-    "member",
-    "Halima Yusuf"
-  )
-
-# Tenants: memberships
-Repo.with_tenant(nairobi.id, wangui.id, fn ->
-  Seeds.get_or_create_membership(nairobi, wangui, "admin")
-  Seeds.get_or_create_membership(nairobi, otieno, "member")
-  Seeds.get_or_create_membership(nairobi, aisha, "member")
-end)
-
-Repo.with_tenant(mombasa.id, mombasa_admin.id, fn ->
-  Seeds.get_or_create_membership(mombasa, mombasa_admin, "admin")
-end)
-
-# A banned spam account, so moderation and ban auditing have history.
-spammer =
-  case Accounts.get_user_by_email("spammer@beamchat.dev") do
-    nil ->
-      {:ok, spammer} =
-        Accounts.register_user(%{
-          username:
-            ("spam_bot_" <> Ecto.UUID.generate())
-            |> String.replace("-", "")
-            |> String.slice(0, 20),
-          email: "spammer@beamchat.dev",
-          password: Seeds.password()
-        })
-
-      spammer
-
-    spammer ->
-      spammer
-  end
-
-unless spammer.is_banned do
-  {:ok, _} = Accounts.ban_user(platform_admin, spammer, "Seeded: spam account demo")
-end
-
-# ---------------------------------------------------------------------------
-# Wallets & transactions
-# ---------------------------------------------------------------------------
-
-{:ok, _otieno_wallet} = Wallet.ensure_wallet(otieno.id)
-{:ok, _aisha_wallet} = Wallet.ensure_wallet(aisha.id)
-
-unless Wallet.list_recent_transactions(otieno.id)
-       |> Enum.any?(&(&1.description =~ "seed grant")) do
-  {:ok, _wallet, _txn} =
-    Wallet.manual_credit(platform_admin, otieno.id, Decimal.new("500.00"), "seed grant")
-end
-
-unless Wallet.list_recent_transactions(aisha.id)
-       |> Enum.any?(&(&1.description =~ "seed grant")) do
-  {:ok, _wallet, _txn} =
-    Wallet.manual_credit(platform_admin, aisha.id, Decimal.new("150.00"), "seed grant")
-end
-
-# ---------------------------------------------------------------------------
-# Room categories & rooms (Nairobi tenant)
-# ---------------------------------------------------------------------------
-
-categories =
-  for name <- ["Community", "Music", "Support"] do
-    slug = String.downcase(name)
-
-    Repo.with_tenant(nairobi.id, wangui.id, fn ->
-      from(c in RoomCategory, where: c.tenant_id == ^nairobi.id and c.slug == ^slug)
-      |> Repo.one()
-      |> case do
-        nil ->
-          %RoomCategory{}
-          |> RoomCategory.changeset(%{name: name, slug: slug, tenant_id: nairobi.id})
-          |> Repo.insert!()
-
-        category ->
-          category
-      end
-    end)
-  end
-
-community = Enum.at(categories, 0)
-music = Enum.at(categories, 1)
-
-room_specs = [
-  {"Town Hall", "town-hall", "public",
-   %{description: "The county's main public square.", category_id: community.id}},
-  {"Marketplace", "marketplace", "public",
-   %{description: "Buy, sell, and trade with your neighbours.", category_id: community.id}},
-  {"Announcements", "announcements", "private",
-   %{description: "Admin-only broadcast room.", category_id: community.id}},
-  {"Gikomba Live", "gikomba-live", "paid",
-   %{
-     description: "Premium live market coverage.",
-     category_id: community.id,
-     is_paid: true,
-     price: Decimal.new("100.00")
-   }},
-  {"Rift Valley FM Lounge", "rift-lounge", "public",
-   %{description: "Chat while you listen to the radio.", category_id: music.id}}
-]
-
-rooms =
-  Repo.with_tenant(nairobi.id, wangui.id, fn ->
-    Enum.map(room_specs, fn {name, slug, type, extras} ->
-      case Repo.get_by(BeamChat.Rooms.Room, slug: slug) do
-        nil ->
-          attrs =
-            %{
-              "name" => name,
-              "slug" => slug,
-              "type" => type,
-              "tenant_id" => nairobi.id,
-              "owner_id" => wangui.id
-            }
-            |> Map.merge(Map.new(extras, fn {k, v} -> {to_string(k), v} end))
-
-          {:ok, room} = Rooms.create_room(attrs)
-          room
-
-        room ->
-          # Reconcile the attributes the flows below depend on — an
-          # earlier seed run may predate a change in the spec (e.g. a room
-          # seeded before its paid flags existed).
-          is_paid = Map.get(extras, :is_paid, false)
-          price = Map.get(extras, :price)
-
-          if {room.type, room.is_paid, room.price} != {type, is_paid, price} do
-            room
-            |> Ecto.Changeset.change(type: type, is_paid: is_paid, price: price)
-            |> Repo.update!()
-          else
-            room
-          end
-      end
-    end)
+_banned =
+  Seeds.get_or_create_user(%{
+    username: "spammer",
+    email: "spammer@beamchat.dev",
+    password: "radiobeam123",
+    first_name: "Sam",
+    last_name: "Spam"
+  })
+  |> then(fn user ->
+    unless user.is_banned do
+      {:ok, user} = Accounts.ban_user(admin, user, "Seed: demonstrating a banned account")
+      user
+    else
+      user
+    end
   end)
 
-[town_hall, _marketplace, announcements, gikomba, _lounge] = rooms
+# --- Platform settings --------------------------------------------------------
 
-# Extra memberships beyond ownership (the owner row comes with create_room).
-Repo.with_tenant(nairobi.id, otieno.id, fn ->
-  Seeds.add_room_member(town_hall, otieno, "member")
-  Seeds.add_room_member(town_hall, aisha, "member")
-  Seeds.add_room_member(announcements, otieno, "moderator")
-end)
+IO.puts("Seeding platform settings…")
 
-# A member subscribes to the paid room using their seeded wallet balance.
-case Wallet.subscribe_paid_room(otieno, gikomba) do
-  {:ok, _wallet, _txn, _subscription} ->
-    :ok
+{:ok, _} = Settings.put(:base_currency, "KES")
+{:ok, _} = Settings.put(:room_creation_open, true)
 
-  {:error, :already_subscribed} ->
-    :ok
+# --- Category tree (the PRD's own example) -------------------------------------
+# Category is the tree; Room hangs off a node. A subcategory can nest as
+# deep as an admin wants.
 
-  {:error, :insufficient_funds} ->
-    # Balance already spent on a previous seed run — top up once more.
-    {:ok, _wallet, _txn} =
-      Wallet.manual_credit(platform_admin, otieno.id, Decimal.new("100.00"), "seed top-up")
+IO.puts("Seeding category tree…")
 
-    {:ok, _wallet, _txn, _subscription} = Wallet.subscribe_paid_room(otieno, gikomba)
+gaming =
+  Seeds.get_or_create_category(%{name: "Gaming", slug: "gaming", description: "Everything play."})
 
-  other ->
-    raise "unexpected subscription result: #{inspect(other)}"
-end
-
-# Chat history (guarded, so re-runs never duplicate messages).
-Repo.with_tenant(nairobi.id, wangui.id, fn ->
-  if Rooms.list_recent_messages(town_hall.id, 1) == [] do
-    Seeds.add_room_message(nairobi, town_hall, wangui, "Welcome to the Town Hall, everyone!")
-
-    Seeds.add_room_message(
-      nairobi,
-      town_hall,
-      otieno,
-      "Habari! Looking forward to the market day."
-    )
-
-    Seeds.add_room_message(nairobi, town_hall, aisha, "Karibu everyone \u2764\uFE0F")
-  end
-end)
-
-# ---------------------------------------------------------------------------
-# Direct messages
-# ---------------------------------------------------------------------------
-
-conversation = Direct.get_or_create_conversation!(wangui, otieno)
-
-if Direct.list_messages(conversation.id) == [] do
-  {:ok, _} =
-    Direct.send_message(conversation.id, otieno.id, "Boss, the radio station is ready to start.")
-
-  {:ok, _} =
-    Direct.send_message(
-      conversation.id,
-      wangui.id,
-      "Great — kick it off from the admin page after lunch."
-    )
-end
-
-# ---------------------------------------------------------------------------
-# Moderation rules (feeds the ETS cache the RuleEngine serves)
-# ---------------------------------------------------------------------------
-
-unless Moderation.list_active_rules() |> Enum.any?(&(&1.name == "no-profanity")) do
-  {:ok, _} =
-    Moderation.create_rule(%{
-      name: "no-profanity",
-      type: "word_filter",
-      is_active: true,
-      config: %{"words" => ["shit", "fuck", "asshole"], "action" => "block"}
-    })
-end
-
-unless Moderation.list_active_rules() |> Enum.any?(&(&1.name == "market-scammers")) do
-  {:ok, _} =
-    Moderation.create_rule(%{
-      name: "market-scammers",
-      type: "pattern",
-      is_active: true,
-      config: %{"patterns" => ["^send.*m-pesa\\s+code", "double your money"]}
-    })
-end
-
-unless Moderation.list_active_rules() |> Enum.any?(&(&1.name == "chat-hygiene")) do
-  {:ok, _} =
-    Moderation.create_rule(%{
-      name: "chat-hygiene",
-      type: "rate_limit",
-      is_active: true,
-      config: %{"max_count" => 20, "window_seconds" => 60}
-    })
-end
-
-unless Moderation.list_active_rules() |> Enum.any?(&(&1.name == "link-policy")) do
-  {:ok, _} =
-    Moderation.create_rule(%{
-      name: "link-policy",
-      type: "link_filter",
-      is_active: true,
-      config: %{"action" => "flag", "domains" => ["bit.ly", "tinyurl.com", "t.co"]}
-    })
-end
-
-# ---------------------------------------------------------------------------
-# Radio stations (Nairobi tenant) — created inactive; start them from
-# /admin/radio once the LiveKit Ingress service is running.
-# ---------------------------------------------------------------------------
-
-rift_fm =
-  Seeds.get_or_create_station(wangui, nairobi, "rift-valley-fm", %{
-    "name" => "Rift Valley FM",
-    "slug" => "rift-valley-fm",
-    "description" => "24/7 county news, talk, and Benga music.",
-    "source_type" => "url",
-    "source_url" =>
-      "https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.isml/.m3u8"
+community =
+  Seeds.get_or_create_category(%{
+    name: "Community",
+    slug: "community",
+    description: "Announcements and general talk."
   })
 
-_seeds_radio =
-  Seeds.get_or_create_station(wangui, nairobi, "seed-radio-push", %{
-    "name" => "Seed Radio (push demo)",
-    "slug" => "seed-radio-push",
-    "description" =>
-      "An RTMP push station — point FFmpeg or OBS at the push URL shown after starting.",
-    "source_type" => "rtmp"
+support =
+  Seeds.get_or_create_category(%{name: "Support", slug: "support", description: "Help desks."})
+
+shooters =
+  Seeds.get_or_create_category(%{
+    name: "Shooters",
+    slug: "shooters",
+    parent_id: gaming.id,
+    position: 1
   })
 
-# Mombasa tenant gets one station too, so the switcher has content.
-Seeds.get_or_create_station(mombasa_admin, mombasa, "coast-wave", %{
-  "name" => "Coast Wave",
-  "slug" => "coast-wave",
-  "description" => "Taarab and coastal affairs, streaming all day.",
-  "source_type" => "url",
-  "source_url" =>
-    "https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.isml/.m3u8"
+Seeds.get_or_create_category(%{
+  name: "Announcements",
+  slug: "announcements",
+  parent_id: community.id,
+  position: 1
 })
 
-# ---------------------------------------------------------------------------
-# Refresh caches (the running app picks up the seeded moderation rules)
-# ---------------------------------------------------------------------------
+Seeds.get_or_create_category(%{
+  name: "Billing help",
+  slug: "billing-help",
+  parent_id: support.id,
+  position: 1
+})
 
-:ok = BeamChat.Moderation.RuleEngine.refresh_cache()
+valorant =
+  Seeds.get_or_create_category(%{
+    name: "Valorant",
+    slug: "valorant",
+    parent_id: shooters.id,
+    position: 1
+  })
 
-# ---------------------------------------------------------------------------
-# Summary
-# ---------------------------------------------------------------------------
+internal =
+  Seeds.get_or_create_category(%{
+    name: "Staff (hidden)",
+    slug: "staff-hidden",
+    parent_id: community.id,
+    is_hidden: true
+  })
+
+# --- Rooms (one of every type) --------------------------------------------------
+
+IO.puts("Seeding rooms…")
+
+general =
+  Seeds.get_or_create_room(otieno, %{
+    name: "General",
+    slug: "general",
+    category_id: valorant.id,
+    type: "public"
+  })
+
+lfg =
+  Seeds.get_or_create_room(otieno, %{
+    name: "LFG",
+    slug: "lfg",
+    category_id: valorant.id,
+    type: "public",
+    description: "Looking for a squad."
+  })
+
+_trade =
+  Seeds.get_or_create_room(otieno, %{
+    name: "Trade",
+    slug: "trade",
+    category_id: valorant.id,
+    type: "public",
+    description: "Skin swaps and shop talk."
+  })
+
+announcements_room =
+  Seeds.get_or_create_room(admin, %{
+    name: "Announcements",
+    slug: "announcements-room",
+    category_id: community.id,
+    type: "public"
+  })
+
+staff_room =
+  Seeds.get_or_create_room(admin, %{
+    name: "Staff room",
+    slug: "staff-room",
+    category_id: internal.id,
+    type: "private"
+  })
+
+live_market =
+  Seeds.get_or_create_room(wanjiku, %{
+    name: "Gikomba Live",
+    slug: "gikomba-live",
+    category_id: community.id,
+    type: "paid",
+    price: Decimal.new("150"),
+    description: "Live market talk, KES 150 for 30 days."
+  })
+
+Seeds.ensure_member(staff_room, moderator, "moderator")
+
+# --- Wallets + subscriptions ------------------------------------------------------
+
+IO.puts("Seeding wallets…")
+
+for user <- [admin, moderator, wanjiku, otieno] do
+  {:ok, _wallet} = Wallet.ensure_wallet(user.id)
+end
+
+{:ok, _wallet, _txn} =
+  Wallet.manual_credit(admin, wanjiku.id, Decimal.new("500"), "seed: welcome credit")
+
+{:ok, _wallet, _txn} =
+  Wallet.manual_credit(
+    admin,
+    otieno.id,
+    Decimal.new("150"),
+    "seed: exact price for one subscription"
+  )
+
+case Wallet.subscribe_paid_room(wanjiku, live_market) do
+  {:ok, _wallet, _txn, _sub} -> IO.puts("  wanjiku subscribed to Gikomba Live")
+  {:error, :already_subscribed} -> :ok
+  {:error, reason} -> IO.puts("  subscription seed skipped: #{inspect(reason)}")
+end
+
+# --- Conversations + messages (before the rules land) -------------------------------
+
+IO.puts("Seeding messages…")
+
+for content <- [
+      "Welcome to BeamChat v2 — the rewrite is live.",
+      "Browse the category tree on the left, or make your own room."
+    ] do
+  Rooms.send_message(announcements_room, admin.id, content)
+end
+
+Rooms.send_message(general, otieno.id, "Anyone up for ranked later?")
+Rooms.send_message(general, wanjiku.id, "Add me — I main sentinel.")
+Rooms.send_message(lfg, otieno.id, "LF2 duos, EU servers.")
+
+conversation = Direct.get_or_create_conversation!(wanjiku, otieno)
+Direct.send_message(conversation.id, wanjiku.id, "Saw your trade post — still selling?")
+Direct.send_message(conversation.id, otieno.id, "Yes! I'll list it in the Trade room tonight.")
+
+# --- Moderation rules + cache refresh -----------------------------------------------
+
+IO.puts("Seeding moderation rules…")
+
+Seeds.ensure_rule(%{
+  name: "Profanity filter",
+  type: "word_filter",
+  config: %{"words" => ["damn", "hellno", "scammer"]},
+  is_active: true
+})
+
+Seeds.ensure_rule(%{
+  name: "Crypto pump pattern",
+  type: "pattern",
+  config: %{"patterns" => ["(?i)buy.{0,12}crypto.{0,12}now"]},
+  is_active: true
+})
+
+Seeds.ensure_rule(%{
+  name: "Suspicious link domains",
+  type: "link_filter",
+  config: %{"action" => "block", "domains" => ["spam.example", "phishing.example"]},
+  is_active: true
+})
+
+Seeds.ensure_rule(%{
+  name: "Flag any link in DMs (review)",
+  type: "link_filter",
+  config: %{"action" => "flag", "domains" => ["short.ly", "bit.ly"]},
+  is_active: true
+})
+
+:ok = Moderation.refresh_rule_cache()
+
+# --- Payment provider rows (disabled by default) --------------------------------------
+
+IO.puts(
+  "Payment providers: seeded rows exist (paystack, mpesa) — configure credentials in /admin/settings → Payments.\n" <>
+    "M-Pesa requires the platform currency to be KES (it is)."
+)
+
+_ = Payments.list_provider_statuses()
+
+# --- Radio stations (LiveKit; started from /admin/radio) --------------------------------
+
+IO.puts("Seeding radio stations…")
+
+Seeds.ensure_station(%{
+  name: "Rift Valley FM",
+  slug: "rift-valley-fm",
+  description: "Pull source demo — HLS stream into LiveKit ingress.",
+  source_type: "url",
+  source_url: "https://test-streams.example/rift-valley/index.m3u8"
+})
+
+Seeds.ensure_station(%{
+  name: "Beam Broadcast",
+  slug: "beam-broadcast",
+  description: "Push source demo — RTMP from an encoder.",
+  source_type: "rtmp"
+})
 
 IO.puts("""
 
-Seeded successfully.
+Seed complete.
 
-  Tenants:            #{Tenants.list_tenants() |> Enum.map(& &1.name) |> Enum.join(", ")}
-  Users (password: #{Seeds.password()}):
-    admin@beamchat.dev            (global admin — full RBAC + audit access)
-    moderator@beamchat.dev        (global moderator — can ban, no wallet credit)
-    nairobi.admin@beamchat.dev    (Nairobi tenant admin — rooms, members, radio)
-    mombasa.admin@beamchat.dev    (Mombasa tenant admin)
-    otieno@beamchat.dev           (member, seeded wallet, paid-room subscriber)
-    aisha@beamchat.dev            (member, seeded wallet)
-  Rooms:             #{length(rooms)} in Nairobi (public, private, and paid)
-  Moderation rules:  #{length(Moderation.list_active_rules())} active
-  Radio stations:    3 (inactive — start them at /admin/radio with LiveKit running)
-  Radio room names:  radio-#{rift_fm.slug}, radio-seed-radio-push, radio-coast-wave
+  Accounts (password: radiobeam123)
+    ada@beamchat.dev         — platform admin
+    moe@beamchat.dev         — platform moderator
+    wanjiku@beamchat.dev     — member, 500 wallet credit, subscribed to Gikomba Live
+    otieno@beamchat.dev      — member, owns the Valorant rooms
+    spammer@beamchat.dev     — banned (reason recorded)
+
+  Structure: Gaming → Shooters → Valorant (General / LFG / Trade),
+             Community (Announcements, hidden Staff), Support (Billing help),
+             a paid room (Gikomba Live, KES 150 / 30 days)
+
+  Radio: two stations (start them at /admin/radio once LiveKit runs)
 """)

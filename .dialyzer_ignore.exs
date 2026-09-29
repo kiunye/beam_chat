@@ -1,7 +1,7 @@
 [
-  # The LiveKit Hex package (0.1.4) ships without @spec annotations, so the
-  # AccessToken pipeline in TokenService.generate_token/3 is untyped from
-  # Dialyzer's perspective. The "function call will not succeed" warning at
-  # the call site (VideoLive) is a knock-on effect. Ignore the call site.
-  ~r/lib\/beam_chat_web\/live\/video_live\.ex/
+  # Ecto.Multi is an @opaque type, so piping freshly built Multis into
+  # Ecto.Multi.insert/update trips Dialyzer's call_without_opaque check.
+  # This is a known Ecto false positive (elixir-ecto/ecto#3639); the room
+  # lifecycle helpers in rooms.ex are correct. Ignore those call sites.
+  {"lib/beam_chat/rooms.ex", :call_without_opaque}
 ]

@@ -1,274 +1,165 @@
-<a href="#main-content" class="skip-link">Skip to main content</a>
-
-<div class="min-h-dvh bg-slate-50 text-slate-900 font-sans antialiased">
-  <div class="flex min-h-dvh">
-    <!-- Tenancy rail — dark, structural (Civic Vanguard §Layout) -->
-    <aside class="hidden md:flex md:w-72 lg:w-80 shrink-0 flex-col bg-slate-900 text-slate-200 h-dvh sticky top-0">
-      <!-- Brand -->
-      <div class="flex items-center gap-3 px-5 h-16 border-b border-slate-800">
-        <img src={~p"/images/logo.svg"} alt="BeamChat logo" class="h-9 w-8 shrink-0" />
-        <div class="min-w-0 flex-1">
-          <p class="text-headline-sm text-white truncate">BeamChat</p>
-          <p class="text-label-sm tracking-[0.12em] uppercase text-slate-400">Civic Mesh OS</p>
-        </div>
-        <.icon name="hero-cog-6-tooth" class="size-4 text-slate-500" />
+<%!-- BeamChat v2 app shell: light sidebar + main canvas.
+     The sidebar navigates the product; the admin section renders only
+     for sessions that pass the platform-role check at render time
+     (routes are also blocked at entry — see the :admin live_session).
+     LiveViews pass :active_nav to highlight the current section;
+     controller-rendered pages (home, auth, payment return) don't, so
+     fall back to nil — no nav item reads as active. --%>
+<% active_nav = assigns[:active_nav] %>
+<div class="grid min-h-dvh lg:grid-cols-[260px_1fr]">
+  <%!-- Sidebar (desktop) --%>
+  <aside class="hidden border-r border-base-300 bg-base-100 lg:flex lg:flex-col">
+    <div class="flex items-center gap-2.5 px-5 pt-6 pb-5">
+      <div class="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-content shadow-sm">
+        <.icon name="hero-bolt" class="size-5" />
       </div>
-      
-<!-- Channel filter — client-side, filters the channel links below -->
-      <div class="px-4 pt-4">
-        <label for="rail-filter" class="sr-only">Filter channels and dockets</label>
-        <input
-          id="rail-filter"
-          type="search"
-          placeholder="Filter channels, dockets…"
-          autocomplete="off"
-          phx-hook=".RailFilter"
-          class="w-full rounded-md border border-slate-700 bg-slate-800/80 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-emerald-500"
+      <div>
+        <div class="text-headline-sm leading-tight">BeamChat</div>
+        <div class="text-label-sm text-base-content/50">v{Layouts.beamchat_version()}</div>
+      </div>
+    </div>
+
+    <nav class="flex flex-1 flex-col gap-6 px-3 pb-4" aria-label="Main">
+      <div class="flex flex-col gap-1">
+        <div class="beam-nav-label px-2 pb-1">Explore</div>
+        <Layouts.nav_link
+          to={~p"/rooms"}
+          icon="hero-squares-2x2"
+          label="Rooms"
+          active={active_nav == :rooms}
+        />
+        <Layouts.nav_link
+          to={~p"/radio"}
+          icon="hero-signal"
+          label="Radio"
+          active={active_nav == :radio}
         />
       </div>
 
-      <%= if assigns[:current_user] do %>
-        <nav class="flex-1 overflow-y-auto px-2 py-4 space-y-6" aria-label="Workspace">
-          <section>
-            <h2 class="rail-section px-2 pb-1.5">Channels</h2>
-            <ul id="rail-channel-list" class="space-y-0.5">
-              <li :for={room <- assigns[:sidebar_rooms] || []} data-rail-channel={room.slug}>
-                <.link
-                  navigate={~p"/rooms/#{room.slug}"}
-                  class={[
-                    "flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-sm text-slate-200 hover:bg-slate-800",
-                    assigns[:active_room_slug] == room.slug && "bg-emerald-600/90 text-white"
-                  ]}
-                >
-                  <span class="truncate">
-                    <span class="text-slate-500 mr-1.5">#</span>{room.slug}
-                  </span>
-                  <span
-                    :if={room.type != "public"}
-                    class="badge badge-ghost badge-xs badge-outline text-slate-300 border-slate-600"
-                  >
-                    {room.type}
-                  </span>
-                </.link>
-              </li>
-              <li :if={assigns[:sidebar_rooms] == []}>
-                <a
-                  href={~p"/rooms"}
-                  class="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-200 hover:bg-slate-800"
-                >
-                  <span class="text-slate-500">#</span> Browse the room directory
-                </a>
-              </li>
-            </ul>
-          </section>
+      <div class="flex flex-col gap-1">
+        <div class="beam-nav-label px-2 pb-1">Account</div>
+        <Layouts.nav_link
+          to={~p"/messages"}
+          icon="hero-chat-bubble-left-right"
+          label="Messages"
+          active={active_nav == :messages}
+        />
+        <Layouts.nav_link
+          to={~p"/wallet"}
+          icon="hero-banknotes"
+          label="Wallet"
+          active={active_nav == :wallet}
+        />
+      </div>
 
-          <section>
-            <h2 class="rail-section px-2 pb-1.5">Operations</h2>
-            <ul class="space-y-0.5">
-              <li>
-                <.link
-                  navigate={~p"/messages"}
-                  class="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-200 hover:bg-slate-800"
-                >
-                  <.icon name="hero-envelope" class="size-4 text-slate-500" /> Direct messages
-                </.link>
-              </li>
-              <li>
-                <.link
-                  navigate={~p"/radio"}
-                  class="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-200 hover:bg-slate-800"
-                >
-                  <.icon name="hero-radio" class="size-4 text-slate-500" /> Radio stations
-                </.link>
-              </li>
-            </ul>
-          </section>
-
-          <section>
-            <h2 class="rail-section px-2 pb-1.5">Revenue & verification</h2>
-            <ul class="space-y-0.5">
-              <li>
-                <.link
-                  navigate={~p"/wallet"}
-                  class="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-sm text-slate-200 hover:bg-slate-800"
-                >
-                  <span class="flex items-center gap-2">
-                    <.icon name="hero-banknotes" class="size-4 text-slate-500" /> County wallet
-                  </span>
-                  <span class="badge badge-xs badge-outline border-slate-600 text-slate-300">
-                    KES
-                  </span>
-                </.link>
-              </li>
-            </ul>
-          </section>
-
-          <%= if BeamChat.Authorization.can?(assigns[:current_scope], :room_create) do %>
-            <section>
-              <h2 class="rail-section px-2 pb-1.5">Console</h2>
-              <ul class="space-y-0.5">
-                <li>
-                  <.link
-                    navigate={~p"/admin/rooms"}
-                    class="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-200 hover:bg-slate-800"
-                  >
-                    <.icon name="hero-squares-plus" class="size-4 text-slate-500" /> Rooms console
-                  </.link>
-                </li>
-                <li>
-                  <.link
-                    navigate={~p"/admin/members"}
-                    class="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-200 hover:bg-slate-800"
-                  >
-                    <.icon name="hero-users" class="size-4 text-slate-500" /> Members
-                  </.link>
-                </li>
-                <li>
-                  <.link
-                    navigate={~p"/admin/radio"}
-                    class="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-200 hover:bg-slate-800"
-                  >
-                    <.icon name="hero-signal" class="size-4 text-slate-500" /> Radio admin
-                  </.link>
-                </li>
-              </ul>
-            </section>
-          <% end %>
-        </nav>
-        
-<!-- Session -->
-        <div class="border-t border-slate-800 p-4 space-y-3">
-          <div class="flex items-center gap-3">
-            <div class="size-8 rounded-full bg-emerald-600/20 text-emerald-400 flex items-center justify-center text-xs font-semibold">
-              {String.first(assigns[:current_user].username || "U") |> String.upcase()}
-            </div>
-            <div class="min-w-0 flex-1">
-              <p class="text-sm font-medium text-white truncate">
-                {assigns[:current_user].full_name || assigns[:current_user].username}
-              </p>
-              <p class="text-label-sm text-slate-500 uppercase tracking-[0.08em]">
-                {assigns[:current_user].role}
-              </p>
-            </div>
-          </div>
-          <form action={~p"/auth/logout"} method="post">
-            <input type="hidden" name="_csrf_token" value={get_csrf_token()} />
-            <button
-              type="submit"
-              class="btn btn-ghost btn-sm btn-sm w-full text-slate-300 hover:text-white"
-            >
-              Sign out
-            </button>
-          </form>
-          <Layouts.theme_toggle />
-        </div>
-      <% else %>
-        <nav class="flex-1 px-2 py-4" aria-label="Public">
-          <a
-            href={~p"/"}
-            class="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-200 hover:bg-slate-800"
-          >
-            <.icon name="hero-home" class="size-4 text-slate-500" /> Home
-          </a>
-        </nav>
-        <div class="border-t border-slate-800 p-4 space-y-2">
-          <a href={~p"/auth/login"} class="btn btn-ghost btn-sm w-full">Sign in</a>
-          <a href={~p"/auth/register"} class="btn btn-primary btn-sm w-full">Create account</a>
-          <Layouts.theme_toggle />
+      <%= if BeamChat.Authorization.can?(@current_scope, :settings_access) do %>
+        <div class="flex flex-col gap-1">
+          <div class="beam-nav-label px-2 pb-1">Admin</div>
+          <Layouts.nav_link
+            to={~p"/admin/settings"}
+            icon="hero-cog-6-tooth"
+            label="Settings"
+            active={active_nav == :admin_settings}
+          />
+          <Layouts.nav_link
+            to={~p"/admin/radio"}
+            icon="hero-broadcast-pin"
+            label="Radio console"
+            active={active_nav == :admin_radio}
+          />
         </div>
       <% end %>
-      
-<!-- Mesh status footer -->
-      <div class="border-t border-slate-800 px-4 py-3 text-xs text-slate-400">
-        <div class="flex items-center gap-2">
-          <span class="size-2 rounded-full bg-emerald-500" />
-          <span class="text-slate-300">Node — operational</span>
-          <.link href={~p"/health"} class="ml-auto text-slate-500 hover:text-slate-300">
-            health
+    </nav>
+
+    <div class="border-t border-base-300 px-4 py-4">
+      <%= if @current_user do %>
+        <div class="flex items-center gap-3">
+          <div class="flex size-9 shrink-0 items-center justify-center rounded-full bg-secondary text-secondary-content text-sm font-semibold uppercase">
+            {Layouts.initials(@current_user)}
+          </div>
+          <div class="min-w-0 flex-1">
+            <div class="truncate text-headline-sm">{@current_user.username}</div>
+            <div class="text-label-sm text-base-content/50 capitalize">{@current_user.role}</div>
+          </div>
+          <.link
+            href={~p"/auth/logout"}
+            method="delete"
+            data-confirm="Log out?"
+            class="btn btn-ghost btn-sm btn-square"
+            aria-label="Log out"
+          >
+            <.icon name="hero-arrow-right-start-on-rectangle" class="size-4" />
           </.link>
         </div>
-        <p class="mt-1 text-slate-600">BeamChat engine v{beamchat_version()}</p>
-      </div>
-    </aside>
-    
-<!-- Workspace column -->
-    <div class="flex min-w-0 flex-1 flex-col">
-      <!-- Top bar -->
-      <header class="sticky top-0 z-40 flex h-16 shrink-0 items-center gap-3 border-b border-slate-200 bg-white/90 px-4 backdrop-blur sm:px-6">
-        <!-- Workspace tabs -->
-        <nav class="flex items-center gap-1 overflow-x-auto pr-2" aria-label="Workspace views">
-          <.topbar_tab
-            active_tab={assigns[:active_tab]}
-            tab={:rooms}
-            label="Rooms & Hierarchy"
-            to={~p"/rooms"}
-          />
-          <.topbar_tab
-            :if={assigns[:current_user]}
-            active_tab={assigns[:active_tab]}
-            tab={:messages}
-            label="Direct Messages"
-            to={~p"/messages"}
-          />
-          <.topbar_tab
-            :if={assigns[:current_user]}
-            active_tab={assigns[:active_tab]}
-            tab={:wallet}
-            label="County Wallet"
-            to={~p"/wallet"}
-          />
-          <.topbar_tab
-            :if={BeamChat.Authorization.can?(assigns[:current_scope], :room_create)}
-            active_tab={assigns[:active_tab]}
-            tab={:admin}
-            label="Admin Console"
-            to={~p"/admin/rooms"}
-          />
-        </nav>
-
-        <div class="ml-auto flex items-center gap-2">
-          <%= if assigns[:current_user] do %>
-            <span class="civic-chip" data-state="on">
-              <span class="size-1.5 rounded-full bg-emerald-500" /> Connected · LiveView
-            </span>
-            <span :if={assigns[:livekit_on_air]} class="civic-chip" data-state="on">
-              <.icon name="hero-microphone" class="size-3.5" /> LiveKit On-Air
-            </span>
-            <button
-              type="button"
-              class="civic-chip px-2 font-mono text-slate-500"
-              phx-click={JS.focus(to: "#rail-filter")}
-              aria-label="Focus channel filter"
-            >
-              <.icon name="hero-magnifying-glass" class="size-3.5" /> ⌘K
-            </button>
-          <% end %>
+      <% else %>
+        <div class="flex items-center gap-2">
+          <.link navigate={~p"/auth/login"} class="btn btn-outline btn-sm flex-1">Sign in</.link>
+          <.link navigate={~p"/auth/register"} class="btn btn-primary btn-sm flex-1">
+            Register
+          </.link>
         </div>
-      </header>
-      
-<!-- Main canvas -->
-      <main id="main-content" class="flex-1 min-w-0 outline-none" tabindex="-1">
-        <div class="mx-auto w-full max-w-[1400px] p-4 sm:p-6 lg:p-8">
-          {@inner_content}
-        </div>
-      </main>
+      <% end %>
     </div>
+  </aside>
+
+  <%!-- Main column --%>
+  <div class="flex min-h-dvh flex-col bg-base-100">
+    <%!-- Mobile nav strip --%>
+    <div class="flex items-center gap-1 overflow-x-auto border-b border-base-300 bg-base-100 px-3 py-2 lg:hidden">
+      <div class="mr-2 flex items-center gap-1.5 font-semibold text-primary">
+        <.icon name="hero-bolt" class="size-4" /> BeamChat
+      </div>
+      <Layouts.nav_link
+        to={~p"/rooms"}
+        icon="hero-squares-2x2"
+        label="Rooms"
+        active={active_nav == :rooms}
+        compact
+      />
+      <Layouts.nav_link
+        to={~p"/messages"}
+        icon="hero-chat-bubble-left-right"
+        label="Messages"
+        active={active_nav == :messages}
+        compact
+      />
+      <Layouts.nav_link
+        to={~p"/wallet"}
+        icon="hero-banknotes"
+        label="Wallet"
+        active={active_nav == :wallet}
+        compact
+      />
+      <Layouts.nav_link
+        to={~p"/radio"}
+        icon="hero-signal"
+        label="Radio"
+        active={active_nav == :radio}
+        compact
+      />
+      <%= if BeamChat.Authorization.can?(@current_scope, :settings_access) do %>
+        <Layouts.nav_link
+          to={~p"/admin/settings"}
+          icon="hero-cog-6-tooth"
+          label="Settings"
+          active={active_nav == :admin_settings}
+          compact
+        />
+      <% end %>
+    </div>
+
+    <main class="mx-auto w-full max-w-[1200px] flex-1 px-4 py-6 sm:px-6 lg:px-8">
+      <Layouts.flash_group flash={@flash} />
+      {@inner_content}
+    </main>
+
+    <footer class="border-t border-base-300 px-6 py-3 text-label-sm text-base-content/40">
+      <div class="mx-auto flex max-w-[1200px] items-center justify-between">
+        <span>BeamChat v{Layouts.beamchat_version()}</span>
+        <span class="beam-chip" data-state="on">
+          <span class="size-1.5 rounded-full bg-primary"></span> Live · Realtime
+        </span>
+      </div>
+    </footer>
   </div>
-
-  <Layouts.flash_group flash={@flash} />
 </div>
-
-<script :type={Phoenix.LiveView.ColocatedHook} name=".RailFilter">
-  export default {
-    mounted() {
-      this.el.addEventListener("input", () => this.apply())
-    },
-    apply() {
-      const q = this.el.value.trim().toLowerCase()
-      document.querySelectorAll("[data-rail-channel]").forEach((el) => {
-        const key = el.getAttribute("data-rail-channel").toLowerCase()
-        el.style.display = key.includes(q) ? "" : "none"
-      })
-    },
-  }
-</script>

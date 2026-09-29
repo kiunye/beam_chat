@@ -1,104 +1,31 @@
 defmodule BeamChatWeb.Webhooks.MpesaWebhookController do
+  @moduledoc """
+  Receives the M-Pesa STK callback at `POST /webhooks/mpesa/:secret`
+  (the secret is enforced upstream by `BeamChatWeb.Plugs.MpesaWebhookAuth`).
+
+  The body flows into the Daraja provider's confirm callback, which
+  resolves the `CheckoutRequestID` against the pending wallet
+  transaction, credits on ResultCode 0 (including the late-completion
+  branch when the expiry job beat the callback), and finalizes failures.
+  """
+
   use BeamChatWeb, :controller
 
-  alias BeamChat.Repo
-  alias BeamChat.Wallet
-  alias BeamChat.Wallet.Wallet, as: WalletSchema
-  alias BeamChat.Wallet.WalletTransaction
+  alias BeamChat.Payments
 
   def create(conn, _params) do
     raw = conn.private[:raw_body] || ""
 
     case Jason.decode(raw) do
-      {:ok, body} ->
-        case extract_stk_callback(body) do
-          {:ok, checkout_id, result_code} ->
-            handle_callback(checkout_id, result_code)
-            send_resp(conn, 200, "ok")
+      {:ok, body} when is_map(body) ->
+        _ = Payments.confirm_topup("mpesa", body)
+        send_resp(conn, 200, "ok")
 
-          :ignore ->
-            send_resp(conn, 200, "ignored")
-        end
+      {:ok, _} ->
+        send_resp(conn, 200, "ignored")
 
       {:error, _} ->
         send_resp(conn, 400, "bad json")
-    end
-  end
-
-  defp extract_stk_callback(%{"Body" => %{"stkCallback" => cb}}) do
-    checkout_id = cb["CheckoutRequestID"]
-
-    if is_binary(checkout_id) do
-      {:ok, checkout_id, cb["ResultCode"]}
-    else
-      :ignore
-    end
-  end
-
-  defp extract_stk_callback(_), do: :ignore
-
-  defp handle_callback(checkout_id, result_code) do
-    case Repo.get_by(WalletTransaction, reference: checkout_id) do
-      nil ->
-        :ok
-
-      %WalletTransaction{status: "completed"} ->
-        :ok
-
-      %WalletTransaction{status: "pending"} = txn ->
-        wallet = Repo.get!(WalletSchema, txn.wallet_id)
-
-        if result_code == 0 do
-          _ =
-            Wallet.complete_provider_credit(
-              wallet.user_id,
-              txn.amount,
-              "mpesa",
-              checkout_id,
-              %{"source" => "webhook"}
-            )
-        else
-          _ =
-            txn
-            |> Ecto.Changeset.change(
-              status: "failed",
-              metadata: Map.merge(txn.metadata || %{}, %{"mpesa_result_code" => result_code})
-            )
-            |> Repo.update()
-        end
-
-        :ok
-
-      %WalletTransaction{status: "failed", metadata: %{"error" => "pending_expired_no_callback"}} =
-          txn ->
-        wallet = Repo.get!(WalletSchema, txn.wallet_id)
-
-        if result_code == 0 do
-          # The 5-minute expiry cron marked this row failed locally before
-          # M-Pesa's callback arrived. The user DID pay — complete the credit
-          # instead of swallowing it.
-          _ =
-            Wallet.complete_provider_credit(
-              wallet.user_id,
-              txn.amount,
-              "mpesa",
-              checkout_id,
-              %{"source" => "webhook", "late_completion" => true}
-            )
-        else
-          # M-Pesa also reports failure; keep the row failed and record the code.
-          _ =
-            txn
-            |> Ecto.Changeset.change(
-              metadata: Map.merge(txn.metadata, %{"mpesa_result_code" => result_code})
-            )
-            |> Repo.update()
-        end
-
-        :ok
-
-      _ ->
-        :ok
     end
   end
 end

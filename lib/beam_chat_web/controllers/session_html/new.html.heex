@@ -1,37 +1,42 @@
-<div class="mx-auto w-full max-w-md pt-6">
-  <div class="rounded-lg border border-slate-200 bg-white p-6 sm:p-8 shadow-civic-2">
-    <h1 class="font-display text-headline-lg text-slate-900">Sign in</h1>
-
-    <p class="mt-1 text-body-md text-slate-600 mb-6">
-      Welcome back — sign in with your email or a provider below.
-    </p>
+<div class="mx-auto w-full max-w-md pt-6" id="login-page">
+  <div class="card bg-white border border-base-300 shadow-panel rounded-box p-6 sm:p-8">
+    <div class="mb-6 flex items-center gap-2.5">
+      <div class="flex size-10 items-center justify-center rounded-lg bg-primary text-primary-content">
+        <.icon name="hero-bolt" class="size-5" />
+      </div>
+      <div>
+        <h1 class="text-headline-lg">Sign in</h1>
+        <p class="text-sm text-base-content/60">Welcome back to BeamChat.</p>
+      </div>
+    </div>
 
     <%= if @error_message do %>
-      <p class="alert alert-error rounded-md text-sm mb-4" role="alert">{@error_message}</p>
+      <p class="alert alert-error text-sm mb-4" role="alert">{@error_message}</p>
     <% end %>
 
-    <form action={~p"/auth/login"} method="post" class="space-y-4">
+    <form action={~p"/auth/login"} method="post" class="flex flex-col gap-4" id="login-form">
       <input type="hidden" name="_csrf_token" value={get_csrf_token()} />
       <div class="fieldset">
         <label class="label" for="user_email">
-          <span class="label-text text-body-md text-slate-700">Email</span>
+          <span class="label-text">Email</span>
         </label>
         <input
-          class="input input-bordered w-full rounded-md"
+          class="input input-bordered w-full"
           type="email"
           name="user[email]"
           id="user_email"
           autocomplete="email"
           required
+          placeholder="you@example.com"
         />
       </div>
 
       <div class="fieldset">
         <label class="label" for="user_password">
-          <span class="label-text text-body-md text-slate-700">Password</span>
+          <span class="label-text">Password</span>
         </label>
         <input
-          class="input input-bordered w-full rounded-md"
+          class="input input-bordered w-full"
           type="password"
           name="user[password]"
           id="user_password"
@@ -39,29 +44,23 @@
           required
         />
       </div>
-      <button type="submit" class="btn btn-primary w-full rounded-md">Sign in</button>
+      <button type="submit" class="btn btn-primary w-full">Sign in</button>
     </form>
 
-    <div class="divider text-xs text-slate-400" aria-hidden="true">or continue with</div>
+    <div class="divider text-xs text-base-content/40" aria-hidden="true">or continue with</div>
 
     <div class="grid grid-cols-2 gap-2">
-      <a
-        href={~p"/auth/oauth/google"}
-        class="btn btn-outline btn-sm rounded-md border-slate-300 bg-white"
-      >
-        Google
+      <a href={~p"/auth/oauth/google"} class="btn btn-outline btn-sm">
+        <.icon name="hero-globe-alt" class="size-4" /> Google
       </a>
-      <a
-        href={~p"/auth/oauth/github"}
-        class="btn btn-outline btn-sm rounded-md border-slate-300 bg-white"
-      >
-        GitHub
+      <a href={~p"/auth/oauth/github"} class="btn btn-outline btn-sm">
+        <.icon name="hero-code-bracket" class="size-4" /> GitHub
       </a>
     </div>
 
-    <p class="mt-6 text-body-md text-center text-slate-600">
+    <p class="mt-6 text-center text-sm text-base-content/60">
       <a class="link link-hover link-primary" href={~p"/auth/register"}>Create an account</a>
-      <span class="mx-2 text-slate-300" aria-hidden="true">·</span>
+      <span class="mx-2 text-base-300" aria-hidden="true">·</span>
       <a class="link link-hover link-primary" href={~p"/auth/magic-link"}>Email me a link</a>
     </p>
   </div>

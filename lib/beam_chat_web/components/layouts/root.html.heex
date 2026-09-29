@@ -4,52 +4,21 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="csrf-token" content={get_csrf_token()} />
-    <meta name="color-scheme" content="light dark" />
+    <meta name="color-scheme" content="light" />
     <meta
       name="description"
-      content="BeamChat — the civic mesh for counties: rooms, direct messages, county wallet, and live radio, all in real time."
+      content="BeamChat — rooms, direct messages, wallet, and live radio, all in real time."
     />
     <meta property="og:title" content={assigns[:page_title] || "BeamChat"} />
     <meta
       property="og:description"
-      content="The civic mesh for counties: rooms, direct messages, county wallet, and live radio — all in real time."
+      content="BeamChat — rooms, direct messages, wallet, and live radio, all in real time."
     />
     <meta property="og:type" content="website" />
     <link rel="icon" type="image/x-icon" href={~p"/favicon.ico"} />
-    <.live_title default="BeamChat — Civic Mesh OS">{assigns[:page_title]}</.live_title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
-      rel="stylesheet"
-    />
+    <.live_title default="BeamChat">{assigns[:page_title]}</.live_title>
     <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
     <script defer phx-track-static type="text/javascript" src={~p"/assets/js/app.js"}>
-    </script>
-
-    <%= if assigns[:include_figma_capture] do %>
-      <script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async>
-      </script>
-    <% end %>
-
-    <script>
-      (() => {
-        const setTheme = (theme) => {
-          if (theme === "system") {
-            localStorage.removeItem("phx:theme");
-            document.documentElement.removeAttribute("data-theme");
-          } else {
-            localStorage.setItem("phx:theme", theme);
-            document.documentElement.setAttribute("data-theme", theme);
-          }
-        };
-        if (!document.documentElement.hasAttribute("data-theme")) {
-          setTheme(localStorage.getItem("phx:theme") || "system");
-        }
-        window.addEventListener("storage", (e) => e.key === "phx:theme" && setTheme(e.newValue || "system"));
-
-        window.addEventListener("phx:set-theme", (e) => setTheme(e.target.dataset.phxTheme));
-      })();
     </script>
   </head>
 

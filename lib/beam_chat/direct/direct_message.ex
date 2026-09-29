@@ -13,6 +13,7 @@ defmodule BeamChat.Direct.DirectMessage do
     field :metadata, :map, default: %{}
     field :is_read, :boolean, default: false
     field :is_deleted, :boolean, default: false
+    field :moderation_flag, :string
 
     belongs_to :conversation, BeamChat.Direct.Conversation, foreign_key: :conversation_id
     belongs_to :sender, BeamChat.Accounts.User, foreign_key: :sender_id
@@ -29,7 +30,8 @@ defmodule BeamChat.Direct.DirectMessage do
       :content_type,
       :metadata,
       :is_read,
-      :is_deleted
+      :is_deleted,
+      :moderation_flag
     ])
     |> validate_required([:conversation_id, :sender_id, :content])
     |> validate_length(:content, min: 1, max: 10_000)

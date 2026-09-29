@@ -6,6 +6,10 @@
 // view; each hook reacts only when the event's `room` matches its own
 // station, so multiple stations can coexist on the page.
 //
+// Server push events are consumed via `this.handleEvent` — the sanctioned
+// hook API. LiveView dispatches `phx:<event>` CustomEvents on `window`, so
+// element-scoped addEventListener would never fire.
+//
 // The hook attaches the incoming audio track to an <audio> element it
 // creates inside its container and never publishes anything back to the
 // room (listener tokens are subscribe-only by construction).
@@ -20,20 +24,19 @@ const RadioPlayer = {
     this.room = null
     this.audioEl = null
 
-    this.handleConnect = (event) => {
-      if (event.detail && event.detail.room === this.el.dataset.room) {
-        this.connect(event.detail)
+    this.handleEvent("radio_connect", (payload) => {
+      if (payload && payload.room === this.el.dataset.room) {
+        this.connect(payload)
       }
-    }
+    })
 
-    this.handleDisconnect = (event) => {
-      if (!event.detail || event.detail.room === this.el.dataset.room) {
+    this.handleEvent("radio_disconnect", (payload) => {
+      // A disconnect without a room matches everyone (view-level teardown);
+      // a room-scoped disconnect only matches this station.
+      if (!payload || payload.room === this.el.dataset.room) {
         this.disconnect(true)
       }
-    }
-
-    this.el.addEventListener("phx:radio_connect", this.handleConnect)
-    this.el.addEventListener("phx:radio_disconnect", this.handleDisconnect)
+    })
   },
 
   destroyed() {
